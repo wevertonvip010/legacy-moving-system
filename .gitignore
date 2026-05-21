@@ -1,0 +1,20 @@
+# Segurança — nunca versionar
+backend/.env
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Node
+node_modules/
+dist/
+.env.local
+.env.production
+
+# Logs
+*.log
+backend.log

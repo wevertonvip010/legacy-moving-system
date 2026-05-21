@@ -1,0 +1,18 @@
+# SPA fallback
+/dashboard /index.html 200
+/clientes /index.html 200
+/leads /index.html 200
+/licitacoes /index.html 200
+/visitas /index.html 200
+/orcamentos /index.html 200
+/contratos /index.html 200
+/ordens-servico /index.html 200
+/financeiro /index.html 200
+/marketing /index.html 200
+/vendas /index.html 200
+/estoque /index.html 200
+/programa-pontos /index.html 200
+/calendario /index.html 200
+/graficos /index.html 200
+/configuracoes /index.html 200
+

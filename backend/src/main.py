@@ -1,0 +1,2526 @@
+import os
+import sys
+import json
+import logging
+from datetime import datetime, timedelta
+from functools import wraps
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from flask_jwt_extended import (
+    JWTManager, create_access_token, jwt_required, get_jwt_identity
+)
+from werkzeug.security import check_password_hash, generate_password_hash
+from dotenv import load_dotenv
+from sqlalchemy import extract
+
+load_dotenv(os.path.join(os.path.dirname(current_dir), '.env'))
+
+from database_real import (
+    db, Contador, User, Lead, Cliente, Organizer,
+    Orcamento, CadastroComplementar, Contrato,
+    OrdemServico, Programacao, Estoque, MovimentacaoEstoque,
+    GuardaMovel, Recibo, Despesa, Meta,
+    EtapaOperacional, FechamentoOperacional, Comissao,
+    Avaria, UserActivityLog,
+    init_db
+)
+
+app = Flask(__name__)
+
+_db_file = os.path.join(current_dir, "legacy_moving.db").replace("\\", "/")
+DB_PATH = os.environ.get('DATABASE_URL') or f'sqlite:///{_db_file}'
+app.config['SQLALCHEMY_DATABASE_URI'] = DB_PATH
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+_jwt_secret = os.environ.get('JWT_SECRET_KEY')
+if not _jwt_secret:
+    logger.warning("JWT_SECRET_KEY não configurada no .env — usando valor inseguro. Configure antes de subir em produção.")
+    _jwt_secret = 'INSEGURO-trocar-em-producao-via-JWT_SECRET_KEY'
+app.config['JWT_SECRET_KEY'] = _jwt_secret
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
+
+db.init_app(app)
+jwt = JWTManager(app)
+CORS(app, origins="*", allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+init_db(app)
+
+
+# ── HELPERS ─────────────────────────────────────────────────────────────────
+def err(msg, code=400):
+    return jsonify({"erro": msg}), code
+
+
+def current_user():
+    uid = get_jwt_identity()
+    return User.query.get(int(uid))
+
+
+def require_role(*roles):
+    def decorator(fn):
+        @wraps(fn)
+        @jwt_required()
+        def wrapper(*args, **kwargs):
+            u = current_user()
+            if not u or (u.role not in roles and u.role != 'admin'):
+                return err("Acesso negado", 403)
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def _user_dict(u):
+    return {"id": u.id, "name": u.name, "cpf": u.cpf, "role": u.role, "email": u.email}
+
+
+def _lead_dict(l):
+    return {
+        "id": l.id, "nome": l.nome, "telefone": l.telefone, "email": l.email,
+        "origem": l.origem, "tipo_servico": l.tipo_servico,
+        "bairro_origem": l.bairro_origem, "cidade_origem": l.cidade_origem,
+        "bairro_destino": l.bairro_destino, "cidade_destino": l.cidade_destino,
+        "observacoes": l.observacoes, "classificacao": l.classificacao,
+        "classificacao_justificativa": l.classificacao_justificativa,
+        "vendedor_id": l.vendedor_id, "organizer_id": l.organizer_id,
+        "status": l.status, "orcamento_id": l.orcamento_id,
+        "created_at": l.created_at.isoformat() if l.created_at else None,
+    }
+
+
+def _cliente_dict(c):
+    return {
+        "id": c.id, "nome": c.nome, "email": c.email, "telefone": c.telefone,
+        "cpf_cnpj": c.cpf_cnpj, "endereco": c.endereco,
+        "origem": c.origem, "organizer_id": c.organizer_id,
+        "status": c.status,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _orc_dict(o):
+    return {
+        "id": o.id, "numero": o.numero, "cliente": o.cliente, "cliente_id": o.cliente_id,
+        "vendedor_id": o.vendedor_id, "lead_id": o.lead_id,
+        "tipo_servico": o.tipo_servico,
+        "data_prevista": o.data_prevista.isoformat() if o.data_prevista else None,
+        "orig_rua": o.orig_rua, "orig_numero": o.orig_numero, "orig_complemento": o.orig_complemento,
+        "orig_bairro": o.orig_bairro, "orig_cidade": o.orig_cidade,
+        "orig_estado": o.orig_estado, "orig_cep": o.orig_cep,
+        "dest_rua": o.dest_rua, "dest_numero": o.dest_numero, "dest_complemento": o.dest_complemento,
+        "dest_bairro": o.dest_bairro, "dest_cidade": o.dest_cidade,
+        "dest_estado": o.dest_estado, "dest_cep": o.dest_cep,
+        "valor_servico": o.valor_servico, "valor_seguro": o.valor_seguro, "valor": o.valor,
+        "condicoes_pagamento": o.condicoes_pagamento,
+        "observacoes_comerciais": o.observacoes_comerciais,
+        "justificativa": o.justificativa,
+        "status": o.status,
+        "created_at": o.created_at.isoformat() if o.created_at else None,
+    }
+
+
+def _cadastro_dict(c):
+    orc = Orcamento.query.get(c.orcamento_id) if c.orcamento_id else None
+    return {
+        "id": c.id, "orcamento_id": c.orcamento_id, "cliente_id": c.cliente_id,
+        "cpf_cnpj": c.cpf_cnpj, "rg_ie": c.rg_ie,
+        "orig_rua": c.orig_rua, "orig_numero": c.orig_numero,
+        "orig_complemento": c.orig_complemento,
+        "orig_bairro": c.orig_bairro, "orig_cidade": c.orig_cidade,
+        "orig_estado": c.orig_estado, "orig_cep": c.orig_cep,
+        "dest_rua": c.dest_rua, "dest_numero": c.dest_numero,
+        "dest_complemento": c.dest_complemento,
+        "dest_bairro": c.dest_bairro, "dest_cidade": c.dest_cidade,
+        "dest_estado": c.dest_estado, "dest_cep": c.dest_cep,
+        "data_confirmada": c.data_confirmada.isoformat() if c.data_confirmada else None,
+        "dados_para_contrato": c.dados_para_contrato,
+        "planilha_seguro": c.planilha_seguro,
+        "observacoes_finais": c.observacoes_finais,
+        "status": c.status,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "orcamento": {"id": orc.id, "numero": orc.numero, "cliente": orc.cliente} if orc else None,
+    }
+
+
+def _contrato_dict(c):
+    return {
+        "id": c.id, "numero": c.numero, "cliente": c.cliente, "cliente_id": c.cliente_id,
+        "orcamento_id": c.orcamento_id, "tipo_servico": c.tipo_servico,
+        "endereco_origem": c.endereco_origem, "endereco_destino": c.endereco_destino,
+        "data_execucao": c.data_execucao.isoformat() if c.data_execucao else None,
+        "valor_servico": c.valor_servico, "valor_seguro": c.valor_seguro, "valor": c.valor,
+        "condicoes_pagamento": c.condicoes_pagamento,
+        "observacoes_contratuais": c.observacoes_contratuais,
+        "drive_url": c.drive_url, "status": c.status,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _os_dict(o):
+    return {
+        "id": o.id, "numero": o.numero, "contrato_id": o.contrato_id,
+        "cliente": o.cliente, "cliente_id": o.cliente_id,
+        "tipo_servico": o.tipo_servico,
+        "endereco_origem": o.endereco_origem, "endereco_destino": o.endereco_destino,
+        "data_mudanca": o.data_mudanca.isoformat() if o.data_mudanca else None,
+        "hora_inicio": o.hora_inicio, "hora_fim_estimada": o.hora_fim_estimada,
+        "hora_inicio_real": o.hora_inicio_real, "hora_fim_real": o.hora_fim_real,
+        "motorista": o.motorista, "veiculo": o.veiculo,
+        "equipe": o.equipe, "quantidade_ajudantes": o.quantidade_ajudantes,
+        "quantidade_dias": o.quantidade_dias,
+        "materiais_previstos": o.materiais_previstos,
+        "materiais_usados": o.materiais_usados,
+        "checklist": o.checklist,
+        "ocorrencias": o.ocorrencias,
+        "observacoes_operacionais": o.observacoes_operacionais,
+        "observacoes_finais": o.observacoes_finais,
+        "valor_total": o.valor_total,
+        "drive_url": o.drive_url, "status": o.status,
+        "created_at": o.created_at.isoformat() if o.created_at else None,
+    }
+
+
+def _recibo_dict(r):
+    return {
+        "id": r.id, "numero": r.numero, "os_id": r.os_id,
+        "cliente": r.cliente, "cliente_id": r.cliente_id,
+        "servico_realizado": r.servico_realizado,
+        "valor_cobrado": r.valor_cobrado, "forma_pagamento": r.forma_pagamento,
+        "data_pagamento": r.data_pagamento.isoformat() if r.data_pagamento else None,
+        "observacoes": r.observacoes, "drive_url": r.drive_url, "status": r.status,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def _estoque_dict(e):
+    return {
+        "id": e.id, "material": e.material, "unidade": e.unidade,
+        "quantidade": e.quantidade, "estoque_minimo": e.estoque_minimo,
+        "estoque_critico": e.estoque_critico, "valor_unitario": e.valor_unitario,
+        "alerta": e.alerta,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+    }
+
+
+def _box_dict(b):
+    return {
+        "id": b.id, "numero": b.numero, "status": b.status,
+        "cliente_id": b.cliente_id, "cliente_nome": b.cliente_nome,
+        "valor_mensal": b.valor_mensal,
+        "metros_quadrados": b.metros_quadrados,
+        "metros_cubicos": b.metros_cubicos,
+        "data_entrada": b.data_entrada.isoformat() if b.data_entrada else None,
+        "data_saida_prevista": b.data_saida_prevista.isoformat() if b.data_saida_prevista else None,
+        "observacoes": b.observacoes,
+    }
+
+
+# ── PDF GENERATION (local) ───────────────────────────────────────────────────
+def _gerar_pdf_contrato(contrato):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph("LEGACY MOVING - CONTRATO DE PRESTAÇÃO DE SERVIÇOS", styles['Title']),
+            Spacer(1, 12),
+            Paragraph(f"Contrato: {contrato.numero}", styles['Normal']),
+            Paragraph(f"Cliente: {contrato.cliente}", styles['Normal']),
+            Paragraph(f"Serviço: {contrato.tipo_servico}", styles['Normal']),
+            Paragraph(f"Valor do Serviço: R$ {contrato.valor_servico:,.2f}", styles['Normal']),
+            Paragraph(f"Valor do Seguro: R$ {contrato.valor_seguro:,.2f}", styles['Normal']),
+            Paragraph(f"Condições: {contrato.condicoes_pagamento or ''}", styles['Normal']),
+            Spacer(1, 12),
+            Paragraph(f"Origem: {contrato.endereco_origem}", styles['Normal']),
+            Paragraph(f"Destino: {contrato.endereco_destino}", styles['Normal']),
+        ]
+        doc.build(story)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"PDF error: {e}")
+        return None
+
+
+def _gerar_pdf_os(os_):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph("LEGACY MOVING - ORDEM DE SERVIÇO", styles['Title']),
+            Spacer(1, 12),
+            Paragraph(f"OS: {os_.numero}", styles['Normal']),
+            Paragraph(f"Cliente: {os_.cliente}", styles['Normal']),
+            Paragraph(f"Data: {os_.data_mudanca.strftime('%d/%m/%Y') if os_.data_mudanca else '-'}", styles['Normal']),
+            Paragraph(f"Origem: {os_.endereco_origem}", styles['Normal']),
+            Paragraph(f"Destino: {os_.endereco_destino}", styles['Normal']),
+            Paragraph(f"Equipe: {os_.equipe or '-'}", styles['Normal']),
+            Paragraph(f"Veículo: {os_.veiculo or '-'}", styles['Normal']),
+            Paragraph(f"Valor: R$ {os_.valor_total:,.2f}", styles['Normal']),
+        ]
+        doc.build(story)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"PDF error: {e}")
+        return None
+
+
+def _gerar_pdf_recibo(recibo):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph("LEGACY MOVING - RECIBO", styles['Title']),
+            Spacer(1, 12),
+            Paragraph(f"Recibo: {recibo.numero}", styles['Normal']),
+            Paragraph(f"Cliente: {recibo.cliente}", styles['Normal']),
+            Paragraph(f"Serviço: {recibo.servico_realizado or '-'}", styles['Normal']),
+            Paragraph(f"Valor: R$ {recibo.valor_cobrado:,.2f}", styles['Normal']),
+            Paragraph(f"Pagamento: {recibo.forma_pagamento or '-'}", styles['Normal']),
+            Paragraph(f"Data: {recibo.data_pagamento.strftime('%d/%m/%Y') if recibo.data_pagamento else '-'}", styles['Normal']),
+        ]
+        doc.build(story)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"PDF error: {e}")
+        return None
+
+
+def _salvar_drive(pdf_bytes, caminho, nome_arquivo):
+    """Google Drive upload — usa service account se GOOGLE_CREDENTIALS_JSON estiver configurado."""
+    creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+    if not creds_json or not pdf_bytes:
+        return None
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+        from google.oauth2 import service_account
+        import io
+        creds_data = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_data,
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=creds)
+
+        def _get_or_create_folder(parent_id, name):
+            q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+            res = service.files().list(q=q, fields='files(id)').execute()
+            if res['files']:
+                return res['files'][0]['id']
+            meta = {'name': name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
+            f = service.files().create(body=meta, fields='id').execute()
+            return f['id']
+
+        root = service.files().list(q="name='Legacy Moving' and mimeType='application/vnd.google-apps.folder' and trashed=false", fields='files(id)').execute()
+        if root['files']:
+            root_id = root['files'][0]['id']
+        else:
+            meta = {'name': 'Legacy Moving', 'mimeType': 'application/vnd.google-apps.folder'}
+            root_id = service.files().create(body=meta, fields='id').execute()['id']
+
+        folder_id = root_id
+        for part in caminho.split('/'):
+            if part:
+                folder_id = _get_or_create_folder(folder_id, part)
+
+        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype='application/pdf')
+        file_meta = {'name': nome_arquivo, 'parents': [folder_id]}
+        f = service.files().create(body=file_meta, media_body=media, fields='id,webViewLink').execute()
+        service.permissions().create(fileId=f['id'], body={'role': 'reader', 'type': 'anyone'}).execute()
+        return f.get('webViewLink')
+    except Exception as e:
+        logger.error(f"Drive upload error: {e}")
+        return None
+
+
+# ── HEALTH ───────────────────────────────────────────────────────────────────
+@app.route('/api/health')
+def health():
+    return jsonify({"status": "ok", "sistema": "Legacy Moving v2.0",
+                    "timestamp": datetime.now().isoformat()})
+
+
+# ── AUTH ─────────────────────────────────────────────────────────────────────
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.json or {}
+    cpf = data.get('cpf', '').replace('.', '').replace('-', '').replace(' ', '')
+    password = data.get('password', '')
+    if not cpf or not password:
+        return err("CPF e senha são obrigatórios")
+    user = User.query.filter_by(cpf=cpf).first()
+    if not user or not check_password_hash(user.password, password):
+        return err("CPF ou senha inválidos", 401)
+    token = create_access_token(identity=str(user.id))
+    return jsonify({"token": token, "user": _user_dict(user)})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    return jsonify({"status": "ok", "mensagem": "Logout realizado"})
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@jwt_required()
+def me():
+    return jsonify(_user_dict(current_user()))
+
+
+# ── USUÁRIOS ─────────────────────────────────────────────────────────────────
+@app.route('/api/usuarios', methods=['GET'])
+@require_role('admin')
+def listar_usuarios():
+    return jsonify([_user_dict(u) for u in User.query.all()])
+
+
+@app.route('/api/usuarios', methods=['POST'])
+@require_role('admin')
+def criar_usuario():
+    data = request.json or {}
+    cpf = data.get('cpf', '').replace('.', '').replace('-', '')
+    if not cpf or not data.get('password') or not data.get('name'):
+        return err("cpf, password e name são obrigatórios")
+    if User.query.filter_by(cpf=cpf).first():
+        return err("CPF já cadastrado")
+    u = User(cpf=cpf, password=generate_password_hash(data['password']),
+             name=data['name'], email=data.get('email', ''),
+             role=data.get('role', 'vendedor'))
+    db.session.add(u)
+    db.session.commit()
+    return jsonify(_user_dict(u)), 201
+
+
+# ── DASHBOARD ─────────────────────────────────────────────────────────────────
+@app.route('/api/dashboard', methods=['GET'])
+@jwt_required()
+def dashboard():
+    now = datetime.utcnow()
+    inicio_mes = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    leads_novos = Lead.query.filter(Lead.status == 'novo').count()
+    leads_sem_contato = Lead.query.filter(
+        Lead.status == 'novo',
+        Lead.created_at <= now - timedelta(days=3)
+    ).count()
+
+    mudancas_mes = OrdemServico.query.filter(
+        OrdemServico.created_at >= inicio_mes,
+        OrdemServico.status.in_(['agendada', 'em_andamento', 'concluida'])
+    ).count()
+
+    boxes_ocupados = GuardaMovel.query.filter_by(status='ocupado').all()
+    boxes_total = GuardaMovel.query.count()
+    receita_recorrente = sum(b.valor_mensal for b in boxes_ocupados)
+
+    clientes_ativos = Cliente.query.filter_by(status='ativo').count()
+    orcamentos_abertos = Orcamento.query.filter(
+        Orcamento.status.in_(['novo', 'em_negociacao'])
+    ).count()
+
+    estoque_alertas = Estoque.query.filter(
+        Estoque.quantidade <= Estoque.estoque_minimo
+    ).count()
+
+    proximas_os = OrdemServico.query.filter(
+        OrdemServico.status.in_(['agendada', 'em_andamento']),
+        OrdemServico.data_mudanca >= now
+    ).order_by(OrdemServico.data_mudanca).limit(5).all()
+
+    return jsonify({
+        "leads_novos": leads_novos,
+        "leads_sem_contato": leads_sem_contato,
+        "mudancas_mes": mudancas_mes,
+        "boxes_ocupados": len(boxes_ocupados),
+        "boxes_total": boxes_total,
+        "receita_recorrente": receita_recorrente,
+        "clientes_ativos": clientes_ativos,
+        "orcamentos_abertos": orcamentos_abertos,
+        "estoque_alertas": estoque_alertas,
+        "proximas_os": [_os_dict(o) for o in proximas_os],
+    })
+
+
+# ── LEADS ─────────────────────────────────────────────────────────────────────
+@app.route('/api/leads', methods=['GET'])
+@require_role('admin', 'vendedor')
+def listar_leads():
+    status_f = request.args.get('status', '')
+    q = request.args.get('q', '')
+    query = Lead.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    if q:
+        query = query.filter(Lead.nome.ilike(f'%{q}%'))
+    leads = query.order_by(Lead.created_at.desc()).all()
+    return jsonify([_lead_dict(l) for l in leads])
+
+
+@app.route('/api/leads/<int:id>', methods=['GET'])
+@require_role('admin', 'vendedor')
+def obter_lead(id):
+    return jsonify(_lead_dict(Lead.query.get_or_404(id)))
+
+
+@app.route('/api/leads', methods=['POST'])
+@require_role('admin', 'vendedor')
+def criar_lead():
+    data = request.json or {}
+    if not data.get('nome') or not data.get('telefone'):
+        return err("nome e telefone são obrigatórios")
+    u = current_user()
+    l = Lead(
+        nome=data['nome'], telefone=data['telefone'],
+        email=data.get('email', ''),
+        origem=data.get('origem', 'site'),
+        tipo_servico=data.get('tipo_servico', 'residencial'),
+        bairro_origem=data.get('bairro_origem', ''),
+        cidade_origem=data.get('cidade_origem', ''),
+        bairro_destino=data.get('bairro_destino', ''),
+        cidade_destino=data.get('cidade_destino', ''),
+        observacoes=data.get('observacoes', ''),
+        vendedor_id=u.id if u else None,
+        organizer_id=data.get('organizer_id'),
+        status='novo'
+    )
+    db.session.add(l)
+    db.session.commit()
+    return jsonify(_lead_dict(l)), 201
+
+
+@app.route('/api/leads/<int:id>', methods=['PUT'])
+@require_role('admin', 'vendedor')
+def atualizar_lead(id):
+    l = Lead.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['nome', 'telefone', 'email', 'origem', 'tipo_servico',
+              'bairro_origem', 'cidade_origem', 'bairro_destino', 'cidade_destino',
+              'observacoes', 'classificacao', 'classificacao_justificativa',
+              'organizer_id', 'status']:
+        if f in data:
+            setattr(l, f, data[f])
+    if data.get('classificacao') and l.status == 'novo':
+        l.status = 'classificado'
+    db.session.commit()
+    return jsonify(_lead_dict(l))
+
+
+@app.route('/api/leads/<int:id>/classificar', methods=['POST'])
+@require_role('admin', 'vendedor')
+def classificar_lead(id):
+    l = Lead.query.get_or_404(id)
+    data = request.json or {}
+    classificacao = data.get('classificacao')
+    if classificacao not in ('A', 'AA', 'B2B', 'Baixo'):
+        return err("classificacao deve ser A, AA, B2B ou Baixo")
+    l.classificacao = classificacao
+    l.classificacao_justificativa = data.get('justificativa', '')
+    l.status = 'classificado'
+    db.session.commit()
+    return jsonify(_lead_dict(l))
+
+
+@app.route('/api/leads/<int:id>/converter', methods=['POST'])
+@require_role('admin', 'vendedor')
+def converter_lead(id):
+    """Converte lead em orçamento + cliente (se necessário)."""
+    l = Lead.query.get_or_404(id)
+    if l.status == 'convertido':
+        return err("Lead já foi convertido")
+    if not l.classificacao:
+        return err("Lead precisa ser classificado antes de converter")
+
+    # Cria ou associa cliente
+    cliente = None
+    if l.email:
+        cliente = Cliente.query.filter_by(email=l.email).first()
+    if not cliente:
+        cliente = Cliente(
+            nome=l.nome, telefone=l.telefone, email=l.email or '',
+            origem=l.origem, organizer_id=l.organizer_id, status='ativo'
+        )
+        db.session.add(cliente)
+        db.session.flush()
+
+    # Cria orçamento
+    numero = Contador.proximo('orc')
+    orc = Orcamento(
+        numero=numero, cliente=l.nome, cliente_id=cliente.id,
+        vendedor_id=l.vendedor_id, lead_id=l.id,
+        tipo_servico=l.tipo_servico,
+        orig_bairro=l.bairro_origem, orig_cidade=l.cidade_origem,
+        dest_bairro=l.bairro_destino, dest_cidade=l.cidade_destino,
+        status='novo'
+    )
+    db.session.add(orc)
+    db.session.flush()
+
+    l.status = 'convertido'
+    l.orcamento_id = orc.id
+    db.session.commit()
+    return jsonify({"lead": _lead_dict(l), "orcamento": _orc_dict(orc), "cliente": _cliente_dict(cliente)})
+
+
+@app.route('/api/leads/<int:id>', methods=['DELETE'])
+@require_role('admin', 'vendedor')
+def deletar_lead(id):
+    l = Lead.query.get_or_404(id)
+    l.status = 'perdido'
+    db.session.commit()
+    return jsonify({"status": "perdido"})
+
+
+# ── MIRANTE (IA) ──────────────────────────────────────────────────────────────
+@app.route('/api/mirante/chat', methods=['POST'])
+@jwt_required()
+def mirante_chat():
+    data = request.json or {}
+    mensagem = data.get('mensagem', '').strip()
+    historico = data.get('historico', [])
+    if not mensagem:
+        return err("mensagem é obrigatória")
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return jsonify({"resposta": "Mirante não configurado. Adicione ANTHROPIC_API_KEY no .env.", "dados_contexto": {}})
+
+    # Contexto real do banco
+    now = datetime.utcnow()
+    mes, ano = now.month, now.year
+    inicio_mes = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    leads_novos = Lead.query.filter_by(status='novo').count()
+    leads_parados = Lead.query.filter(
+        Lead.status == 'novo', Lead.created_at <= now - timedelta(days=3)
+    ).count()
+    os_abertas = OrdemServico.query.filter(OrdemServico.status.in_(['agendada', 'em_andamento'])).count()
+    os_semana = OrdemServico.query.filter(
+        OrdemServico.data_mudanca >= now,
+        OrdemServico.data_mudanca <= now + timedelta(days=7),
+        OrdemServico.status == 'agendada'
+    ).count()
+    estoque_critico = Estoque.query.filter(Estoque.quantidade <= Estoque.estoque_critico).count()
+    estoque_baixo = Estoque.query.filter(
+        Estoque.quantidade <= Estoque.estoque_minimo,
+        Estoque.quantidade > Estoque.estoque_critico
+    ).count()
+    boxes_ocu = GuardaMovel.query.filter_by(status='ocupado').count()
+    boxes_venc = GuardaMovel.query.filter(
+        GuardaMovel.status == 'ocupado',
+        GuardaMovel.data_saida_prevista <= now + timedelta(days=30),
+        GuardaMovel.data_saida_prevista.isnot(None)
+    ).count()
+    receita_mes = sum(r.valor_cobrado for r in Recibo.query.filter(
+        Recibo.status == 'recebido',
+        extract('month', Recibo.created_at) == mes,
+        extract('year', Recibo.created_at) == ano
+    ).all())
+    despesas_mes = sum(d.valor for d in Despesa.query.filter(
+        extract('month', Despesa.data) == mes,
+        extract('year', Despesa.data) == ano
+    ).all())
+    metas = Meta.query.all()
+
+    contexto = {
+        "data_atual": now.strftime('%d/%m/%Y'),
+        "leads_novos_sem_classificar": leads_novos,
+        "leads_sem_contato_3dias": leads_parados,
+        "os_abertas": os_abertas,
+        "os_proxima_semana": os_semana,
+        "estoque_critico": estoque_critico,
+        "estoque_baixo": estoque_baixo,
+        "boxes_ocupados": boxes_ocu,
+        "boxes_com_saida_proxima": boxes_venc,
+        "receita_mes_atual": receita_mes,
+        "despesas_mes_atual": despesas_mes,
+        "lucro_mes_atual": receita_mes - despesas_mes,
+        "metas": [{"titulo": m.titulo, "meta": m.meta, "realizado": m.realizado} for m in metas]
+    }
+
+    system_prompt = f"""Você é Mirante, o assistente de inteligência artificial interno da Legacy Moving.
+Você tem acesso aos dados reais do sistema. Seja objetivo, direto e útil.
+NUNCA salve nada no banco diretamente. Apenas sugira e preencha formulários.
+Dados atuais do sistema:
+{json.dumps(contexto, ensure_ascii=False, indent=2)}"""
+
+    try:
+        import anthropic
+        client_ai = anthropic.Anthropic(api_key=api_key)
+        msgs = []
+        for h in historico[-10:]:
+            if h.get('role') in ('user', 'assistant') and h.get('content'):
+                msgs.append({"role": h['role'], "content": h['content']})
+        msgs.append({"role": "user", "content": mensagem})
+
+        response = client_ai.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=msgs
+        )
+        resposta = response.content[0].text
+    except Exception as e:
+        logger.error(f"Mirante error: {e}")
+        resposta = f"Erro ao consultar Mirante: {str(e)}"
+
+    return jsonify({"resposta": resposta, "dados_contexto": contexto})
+
+
+@app.route('/api/mirante/classificar-lead', methods=['POST'])
+@require_role('admin', 'vendedor')
+def mirante_classificar_lead():
+    """IA sugere classificação de lead. Usuário confirma antes de salvar."""
+    data = request.json or {}
+    info = data.get('info', '')
+    if not info:
+        return err("info do lead é obrigatória")
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return jsonify({
+            "classificacao_sugerida": "A",
+            "justificativa": "Mirante não configurado. Classify manualmente.",
+            "campos_sugeridos": {}
+        })
+
+    try:
+        import anthropic
+        client_ai = anthropic.Anthropic(api_key=api_key)
+        prompt = f"""Analise as informações abaixo de um potencial cliente de mudança premium e sugira uma classificação.
+
+Classificações possíveis:
+- A: cliente comum, boa aderência ao serviço
+- AA: cliente premium, alta prioridade, budget elevado
+- B2B: empresa, fluxo diferenciado
+- Baixo: pouco aderente, baixa prioridade
+
+Informações do lead:
+{info}
+
+Responda APENAS em JSON válido:
+{{"classificacao": "A|AA|B2B|Baixo", "justificativa": "motivo em 2-3 frases", "campos_sugeridos": {{"tipo_servico": "residencial|comercial|corporativo|guarda_moveis", "origem": "site|instagram|whatsapp|indicacao|google_ads|b2b|organizer"}}}}"""
+
+        response = client_ai.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        result = json.loads(response.content[0].text)
+    except Exception as e:
+        logger.error(f"Mirante classificar error: {e}")
+        result = {"classificacao_sugerida": "A", "justificativa": f"Erro: {e}", "campos_sugeridos": {}}
+
+    return jsonify(result)
+
+
+# ── CLIENTES ─────────────────────────────────────────────────────────────────
+@app.route('/api/clientes', methods=['GET'])
+@jwt_required()
+def listar_clientes():
+    status_f = request.args.get('status', '')
+    q = request.args.get('q', '')
+    query = Cliente.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    else:
+        query = query.filter(Cliente.status != 'arquivado')
+    if q:
+        query = query.filter(Cliente.nome.ilike(f'%{q}%'))
+    return jsonify([_cliente_dict(c) for c in query.order_by(Cliente.created_at.desc()).all()])
+
+
+@app.route('/api/clientes/<int:id>', methods=['GET'])
+@jwt_required()
+def obter_cliente(id):
+    c = Cliente.query.get_or_404(id)
+    orc_list = Orcamento.query.filter_by(cliente_id=id).all()
+    con_list = Contrato.query.filter_by(cliente_id=id).all()
+    os_list = OrdemServico.query.filter_by(cliente_id=id).all()
+    rec_list = Recibo.query.filter_by(cliente_id=id).all()
+    valor_total = sum(r.valor_cobrado for r in rec_list if r.status == 'recebido')
+    d = _cliente_dict(c)
+    d.update({
+        "orcamentos": [_orc_dict(o) for o in orc_list],
+        "contratos": [_contrato_dict(ct) for ct in con_list],
+        "ordens_servico": [_os_dict(o) for o in os_list],
+        "recibos": [_recibo_dict(r) for r in rec_list],
+        "valor_total_gasto": valor_total,
+    })
+    return jsonify(d)
+
+
+@app.route('/api/clientes', methods=['POST'])
+@jwt_required()
+def criar_cliente():
+    data = request.json or {}
+    if not data.get('nome'):
+        return err("Nome é obrigatório")
+    c = Cliente(
+        nome=data['nome'], email=data.get('email', ''),
+        telefone=data.get('telefone', ''), cpf_cnpj=data.get('cpf_cnpj', ''),
+        endereco=data.get('endereco', ''), origem=data.get('origem', 'direto'),
+        organizer_id=data.get('organizer_id'), status='ativo'
+    )
+    db.session.add(c)
+    db.session.commit()
+    return jsonify(_cliente_dict(c)), 201
+
+
+@app.route('/api/clientes/<int:id>', methods=['PUT'])
+@jwt_required()
+def atualizar_cliente(id):
+    c = Cliente.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['nome', 'email', 'telefone', 'cpf_cnpj', 'endereco', 'origem', 'organizer_id', 'status']:
+        if f in data:
+            setattr(c, f, data[f])
+    db.session.commit()
+    return jsonify(_cliente_dict(c))
+
+
+@app.route('/api/clientes/<int:id>', methods=['DELETE'])
+@require_role('admin', 'vendedor')
+def arquivar_cliente(id):
+    c = Cliente.query.get_or_404(id)
+    c.status = 'arquivado'
+    db.session.commit()
+    return jsonify({"status": "arquivado"})
+
+
+@app.route('/api/clientes/<int:id>/historico', methods=['GET'])
+@jwt_required()
+def historico_cliente(id):
+    c = Cliente.query.get_or_404(id)
+    os_list = OrdemServico.query.filter_by(cliente_id=id).order_by(OrdemServico.created_at.desc()).all()
+    orcamentos = Orcamento.query.filter_by(cliente_id=id).order_by(Orcamento.created_at.desc()).all()
+    contratos = Contrato.query.filter_by(cliente_id=id).order_by(Contrato.created_at.desc()).all() if hasattr(Contrato, 'cliente_id') else []
+    recibos = Recibo.query.filter_by(cliente_id=id).order_by(Recibo.created_at.desc()).all()
+    return jsonify({
+        "cliente": _cliente_dict(c),
+        "ordens_servico": [_os_dict(o) for o in os_list],
+        "orcamentos": [_orc_dict(o) for o in orcamentos],
+        "contratos": [_contrato_dict(ct) for ct in contratos],
+        "recibos": [{
+            "id": r.id, "numero": r.numero,
+            "valor_cobrado": r.valor_cobrado,
+            "status": r.status,
+            "data_vencimento": r.data_vencimento.isoformat() if r.data_vencimento else None,
+            "data_recebimento": r.data_recebimento.isoformat() if r.data_recebimento else None,
+            "forma_pagamento": r.forma_pagamento,
+        } for r in recibos],
+    })
+
+
+# ── ORGANIZERS ────────────────────────────────────────────────────────────────
+def _org_stats(o):
+    total = Lead.query.filter_by(organizer_id=o.id).count()
+    convertidos = Lead.query.filter_by(organizer_id=o.id, status='convertido').count()
+    perdidos = Lead.query.filter_by(organizer_id=o.id, status='perdido').count()
+    recibos = (Recibo.query.join(OrdemServico, Recibo.os_id == OrdemServico.id)
+               .join(Cliente, OrdemServico.cliente_id == Cliente.id)
+               .filter(Cliente.organizer_id == o.id, Recibo.status == 'recebido').all())
+    receita = sum(r.valor_cobrado for r in recibos)
+    fechamentos = FechamentoOperacional.query.filter_by(organizer_id=o.id, status='finalizado').all()
+    lucro_total = sum(f.lucro_liquido for f in fechamentos if f.lucro_liquido)
+    comissao_total = sum(c.valor for c in Comissao.query.filter_by(organizer_id=o.id).all())
+    comissao_paga = sum(c.valor for c in Comissao.query.filter_by(organizer_id=o.id, status='pago').all())
+    ultimo_lead = (Lead.query.filter_by(organizer_id=o.id)
+                   .order_by(Lead.created_at.desc()).first())
+    return {
+        "id": o.id, "nome": o.nome, "instagram": o.instagram, "telefone": o.telefone,
+        "empresa": o.empresa, "cidade": o.cidade, "observacoes": o.observacoes,
+        "classificacao": o.classificacao or 'bronze', "meta_mensal": o.meta_mensal or 0,
+        "status": o.status,
+        "total_leads": total, "convertidos": convertidos, "perdidos": perdidos,
+        "taxa_conversao": round(convertidos / total * 100, 1) if total > 0 else 0,
+        "receita_gerada": receita, "lucro_gerado": lucro_total,
+        "comissao_acumulada": comissao_total, "comissao_paga": comissao_paga,
+        "comissao_pendente": comissao_total - comissao_paga,
+        "ticket_medio": round(receita / convertidos, 2) if convertidos > 0 else 0,
+        "ultima_indicacao": ultimo_lead.created_at.isoformat() if ultimo_lead else None,
+        "dias_sem_indicar": (datetime.utcnow() - ultimo_lead.created_at).days if ultimo_lead else None,
+        "created_at": o.created_at.isoformat() if o.created_at else None,
+    }
+
+
+def _classificar_organizer(o):
+    stats = _org_stats(o)
+    receita = stats['receita_gerada']
+    conversao = stats['taxa_conversao']
+    total = stats['total_leads']
+    if receita >= 100000 or (conversao >= 70 and total >= 10):
+        nova = 'vip'
+    elif receita >= 50000 or (conversao >= 60 and total >= 5):
+        nova = 'ouro'
+    elif receita >= 20000 or total >= 5:
+        nova = 'prata'
+    else:
+        nova = 'bronze'
+    if o.classificacao != nova:
+        o.classificacao = nova
+        db.session.commit()
+    return nova
+
+
+@app.route('/api/organizers', methods=['GET'])
+@jwt_required()
+def listar_organizers():
+    include_inativas = request.args.get('todas') == '1'
+    q = Organizer.query
+    if not include_inativas:
+        q = q.filter(Organizer.status != 'inativo')
+    orgs = q.order_by(Organizer.nome).all()
+    result = [_org_stats(o) for o in orgs]
+    result.sort(key=lambda x: x['receita_gerada'], reverse=True)
+    return jsonify(result)
+
+
+@app.route('/api/organizers/ranking', methods=['GET'])
+@jwt_required()
+def ranking_organizers():
+    orgs = Organizer.query.filter(Organizer.status != 'inativo').all()
+    stats = []
+    for o in orgs:
+        s = _org_stats(o)
+        _classificar_organizer(o)
+        stats.append(s)
+    stats.sort(key=lambda x: x['lucro_gerado'], reverse=True)
+    for i, s in enumerate(stats):
+        s['posicao'] = i + 1
+    return jsonify(stats)
+
+
+@app.route('/api/organizers/<int:id>/dashboard', methods=['GET'])
+@jwt_required()
+def dashboard_organizer(id):
+    o = Organizer.query.get_or_404(id)
+    stats = _org_stats(o)
+    # Histórico mensal dos últimos 12 meses
+    from sqlalchemy import func
+    historico = []
+    for i in range(11, -1, -1):
+        mes_dt = datetime.utcnow().replace(day=1) - timedelta(days=30 * i)
+        mes = mes_dt.month
+        ano = mes_dt.year
+        leads_mes = Lead.query.filter_by(organizer_id=id).filter(
+            extract('month', Lead.created_at) == mes,
+            extract('year', Lead.created_at) == ano
+        ).count()
+        conv_mes = Lead.query.filter_by(organizer_id=id, status='convertido').filter(
+            extract('month', Lead.created_at) == mes,
+            extract('year', Lead.created_at) == ano
+        ).count()
+        historico.append({
+            "mes": mes_dt.strftime('%b/%y'),
+            "leads": leads_mes,
+            "convertidos": conv_mes,
+        })
+    # Alertas
+    alertas = []
+    if stats['dias_sem_indicar'] is not None and stats['dias_sem_indicar'] >= 30:
+        alertas.append({"tipo": "inatividade", "msg": f"Sem indicações há {stats['dias_sem_indicar']} dias"})
+    if stats['meta_mensal'] > 0:
+        mes_atual = datetime.utcnow().month
+        leads_mes = Lead.query.filter_by(organizer_id=id).filter(
+            extract('month', Lead.created_at) == mes_atual
+        ).count()
+        if leads_mes >= stats['meta_mensal']:
+            alertas.append({"tipo": "meta", "msg": "Meta mensal atingida!"})
+    return jsonify({**stats, "historico_mensal": historico, "alertas": alertas})
+
+
+@app.route('/api/organizers/<int:id>/comissoes', methods=['GET'])
+@jwt_required()
+def comissoes_organizer(id):
+    Organizer.query.get_or_404(id)
+    comissoes = Comissao.query.filter_by(organizer_id=id).order_by(Comissao.created_at.desc()).all()
+    return jsonify([{
+        "id": c.id, "os_id": c.os_id, "fechamento_id": c.fechamento_id,
+        "valor": c.valor, "percentual": c.percentual, "status": c.status,
+        "data_pagamento": c.data_pagamento.isoformat() if c.data_pagamento else None,
+        "observacoes": c.observacoes,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    } for c in comissoes])
+
+
+@app.route('/api/organizers', methods=['POST'])
+@require_role('admin', 'vendedor')
+def criar_organizer():
+    data = request.json or {}
+    if not data.get('nome'):
+        return err("Nome é obrigatório")
+    o = Organizer(
+        nome=data['nome'],
+        instagram=data.get('instagram', ''),
+        telefone=data.get('telefone', ''),
+        empresa=data.get('empresa', ''),
+        cidade=data.get('cidade', ''),
+        observacoes=data.get('observacoes', ''),
+        classificacao=data.get('classificacao', 'bronze'),
+        meta_mensal=float(data.get('meta_mensal', 0) or 0),
+        status=data.get('status', 'ativo'),
+    )
+    db.session.add(o)
+    db.session.commit()
+    return jsonify(_org_stats(o)), 201
+
+
+@app.route('/api/organizers/<int:id>', methods=['PUT'])
+@require_role('admin', 'vendedor')
+def atualizar_organizer(id):
+    o = Organizer.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['nome', 'instagram', 'telefone', 'empresa', 'cidade', 'observacoes', 'classificacao', 'status']:
+        if f in data:
+            setattr(o, f, data[f])
+    if 'meta_mensal' in data:
+        o.meta_mensal = float(data['meta_mensal'] or 0)
+    db.session.commit()
+    return jsonify(_org_stats(o))
+
+
+@app.route('/api/organizers/<int:id>', methods=['DELETE'])
+@require_role('admin', 'vendedor')
+def inativar_organizer(id):
+    o = Organizer.query.get_or_404(id)
+    o.status = 'inativo'
+    db.session.commit()
+    return jsonify({"status": "inativo"})
+
+
+# ── ORÇAMENTOS ────────────────────────────────────────────────────────────────
+@app.route('/api/orcamentos', methods=['GET'])
+@require_role('admin', 'vendedor')
+def listar_orcamentos():
+    status_f = request.args.get('status', '')
+    q = request.args.get('q', '')
+    query = Orcamento.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    if q:
+        query = query.filter(Orcamento.cliente.ilike(f'%{q}%'))
+    return jsonify([_orc_dict(o) for o in query.order_by(Orcamento.created_at.desc()).all()])
+
+
+@app.route('/api/orcamentos/<int:id>', methods=['GET'])
+@require_role('admin', 'vendedor')
+def obter_orcamento(id):
+    return jsonify(_orc_dict(Orcamento.query.get_or_404(id)))
+
+
+@app.route('/api/orcamentos', methods=['POST'])
+@require_role('admin', 'vendedor')
+def criar_orcamento():
+    data = request.json or {}
+    if not data.get('cliente'):
+        return err("cliente é obrigatório")
+    u = current_user()
+    numero = Contador.proximo('orc')
+    data_prev = None
+    if data.get('data_prevista'):
+        try:
+            data_prev = datetime.fromisoformat(data['data_prevista'])
+        except ValueError:
+            pass
+    o = Orcamento(
+        numero=numero, cliente=data['cliente'],
+        cliente_id=data.get('cliente_id'), vendedor_id=u.id if u else None,
+        lead_id=data.get('lead_id'),
+        tipo_servico=data.get('tipo_servico', 'residencial'),
+        data_prevista=data_prev,
+        orig_rua=data.get('orig_rua', ''), orig_numero=data.get('orig_numero', ''),
+        orig_complemento=data.get('orig_complemento', ''), orig_bairro=data.get('orig_bairro', ''),
+        orig_cidade=data.get('orig_cidade', ''), orig_estado=data.get('orig_estado', ''),
+        orig_cep=data.get('orig_cep', ''),
+        dest_rua=data.get('dest_rua', ''), dest_numero=data.get('dest_numero', ''),
+        dest_complemento=data.get('dest_complemento', ''), dest_bairro=data.get('dest_bairro', ''),
+        dest_cidade=data.get('dest_cidade', ''), dest_estado=data.get('dest_estado', ''),
+        dest_cep=data.get('dest_cep', ''),
+        valor_servico=float(data.get('valor_servico', 0)),
+        valor_seguro=float(data.get('valor_seguro', 0)),
+        condicoes_pagamento=data.get('condicoes_pagamento', ''),
+        observacoes_comerciais=data.get('observacoes_comerciais', ''),
+        status='novo'
+    )
+    db.session.add(o)
+    db.session.commit()
+    return jsonify(_orc_dict(o)), 201
+
+
+@app.route('/api/orcamentos/<int:id>', methods=['PUT'])
+@require_role('admin', 'vendedor')
+def atualizar_orcamento(id):
+    o = Orcamento.query.get_or_404(id)
+    if o.status in ('aprovado', 'rejeitado', 'cancelado'):
+        return err("Orçamento não pode ser editado no status atual")
+    data = request.json or {}
+    for f in ['cliente', 'cliente_id', 'tipo_servico', 'condicoes_pagamento',
+              'observacoes_comerciais', 'justificativa',
+              'orig_rua', 'orig_numero', 'orig_complemento', 'orig_bairro',
+              'orig_cidade', 'orig_estado', 'orig_cep',
+              'dest_rua', 'dest_numero', 'dest_complemento', 'dest_bairro',
+              'dest_cidade', 'dest_estado', 'dest_cep']:
+        if f in data:
+            setattr(o, f, data[f])
+    if 'valor_servico' in data:
+        o.valor_servico = float(data['valor_servico'])
+    if 'valor_seguro' in data:
+        o.valor_seguro = float(data['valor_seguro'])
+    if 'data_prevista' in data and data['data_prevista']:
+        try:
+            o.data_prevista = datetime.fromisoformat(data['data_prevista'])
+        except ValueError:
+            pass
+    if 'status' in data:
+        novo_status = data['status']
+        if novo_status in ('rejeitado', 'cancelado') and not data.get('justificativa') and not o.justificativa:
+            return err("justificativa é obrigatória ao rejeitar ou cancelar")
+        o.status = novo_status
+    db.session.commit()
+    return jsonify(_orc_dict(o))
+
+
+@app.route('/api/orcamentos/<int:id>/aprovar', methods=['POST'])
+@require_role('admin', 'vendedor')
+def aprovar_orcamento(id):
+    o = Orcamento.query.get_or_404(id)
+    if o.status != 'novo' and o.status != 'em_negociacao':
+        return err("Apenas orçamentos em negociação podem ser aprovados")
+    o.status = 'aprovado'
+    # Cria cadastro complementar automaticamente
+    if not CadastroComplementar.query.filter_by(orcamento_id=id).first():
+        cad = CadastroComplementar(
+            orcamento_id=id, cliente_id=o.cliente_id,
+            orig_rua=o.orig_rua, orig_numero=o.orig_numero,
+            orig_complemento=o.orig_complemento,
+            orig_bairro=o.orig_bairro, orig_cidade=o.orig_cidade,
+            orig_estado=o.orig_estado, orig_cep=o.orig_cep,
+            dest_rua=o.dest_rua, dest_numero=o.dest_numero,
+            dest_complemento=o.dest_complemento,
+            dest_bairro=o.dest_bairro, dest_cidade=o.dest_cidade,
+            dest_estado=o.dest_estado, dest_cep=o.dest_cep,
+            status='pendente'
+        )
+        db.session.add(cad)
+    db.session.commit()
+    cad = CadastroComplementar.query.filter_by(orcamento_id=id).first()
+    return jsonify({"orcamento": _orc_dict(o), "cadastro": _cadastro_dict(cad)})
+
+
+@app.route('/api/orcamentos/<int:id>', methods=['DELETE'])
+@require_role('admin', 'vendedor')
+def deletar_orcamento(id):
+    o = Orcamento.query.get_or_404(id)
+    if o.status == 'aprovado':
+        return err("Orçamento aprovado não pode ser excluído")
+    db.session.delete(o)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+# ── CADASTRO COMPLEMENTAR ─────────────────────────────────────────────────────
+@app.route('/api/cadastro-complementar', methods=['GET'])
+@require_role('admin', 'vendedor')
+def listar_cadastros():
+    return jsonify([_cadastro_dict(c) for c in
+                    CadastroComplementar.query.order_by(CadastroComplementar.created_at.desc()).all()])
+
+
+@app.route('/api/cadastro-complementar/<int:id>', methods=['GET'])
+@require_role('admin', 'vendedor')
+def obter_cadastro(id):
+    return jsonify(_cadastro_dict(CadastroComplementar.query.get_or_404(id)))
+
+
+@app.route('/api/cadastro-complementar/orcamento/<int:orc_id>', methods=['GET'])
+@require_role('admin', 'vendedor')
+def cadastro_por_orcamento(orc_id):
+    c = CadastroComplementar.query.filter_by(orcamento_id=orc_id).first_or_404()
+    return jsonify(_cadastro_dict(c))
+
+
+@app.route('/api/cadastro-complementar/<int:id>', methods=['PUT'])
+@require_role('admin', 'vendedor')
+def atualizar_cadastro(id):
+    c = CadastroComplementar.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['cpf_cnpj', 'rg_ie', 'dados_para_contrato', 'planilha_seguro', 'observacoes_finais',
+              'orig_rua', 'orig_numero', 'orig_complemento', 'orig_bairro',
+              'orig_cidade', 'orig_estado', 'orig_cep',
+              'dest_rua', 'dest_numero', 'dest_complemento', 'dest_bairro',
+              'dest_cidade', 'dest_estado', 'dest_cep']:
+        if f in data:
+            setattr(c, f, data[f])
+    if data.get('data_confirmada'):
+        try:
+            c.data_confirmada = datetime.fromisoformat(data['data_confirmada'])
+        except ValueError:
+            pass
+    # Marca completo se CPF e data confirmados
+    if c.cpf_cnpj and c.data_confirmada:
+        c.status = 'completo'
+    db.session.commit()
+    return jsonify(_cadastro_dict(c))
+
+
+@app.route('/api/cadastro-complementar/<int:id>/gerar-contrato', methods=['POST'])
+@require_role('admin', 'vendedor')
+def gerar_contrato_do_cadastro(id):
+    cad = CadastroComplementar.query.get_or_404(id)
+    if cad.status != 'completo':
+        return err("Cadastro complementar precisa estar completo para gerar contrato")
+    orc = Orcamento.query.get_or_404(cad.orcamento_id)
+    if Contrato.query.filter_by(orcamento_id=orc.id).first():
+        return err("Contrato já existe para este orçamento")
+
+    numero = Contador.proximo('con')
+    data_exec = cad.data_confirmada
+    con = Contrato(
+        numero=numero, orcamento_id=orc.id, cadastro_id=cad.id,
+        cliente=orc.cliente, cliente_id=orc.cliente_id,
+        tipo_servico=orc.tipo_servico,
+        endereco_origem=orc.endereco_origem, endereco_destino=orc.endereco_destino,
+        data_execucao=data_exec,
+        valor_servico=orc.valor_servico, valor_seguro=orc.valor_seguro,
+        condicoes_pagamento=orc.condicoes_pagamento,
+        observacoes_contratuais=cad.dados_para_contrato,
+        status='rascunho'
+    )
+    db.session.add(con)
+    db.session.flush()
+
+    # Gera PDF e faz upload
+    pdf = _gerar_pdf_contrato(con)
+    ano = datetime.utcnow().year
+    url = _salvar_drive(pdf, f"Contratos/{ano}", f"{numero}.pdf")
+    if url:
+        con.drive_url = url
+
+    db.session.commit()
+    return jsonify(_contrato_dict(con)), 201
+
+
+# ── CONTRATOS ─────────────────────────────────────────────────────────────────
+@app.route('/api/contratos', methods=['GET'])
+@require_role('admin', 'vendedor', 'operacional')
+def listar_contratos():
+    status_f = request.args.get('status', '')
+    query = Contrato.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    return jsonify([_contrato_dict(c) for c in query.order_by(Contrato.created_at.desc()).all()])
+
+
+@app.route('/api/contratos/<int:id>', methods=['GET'])
+@require_role('admin', 'vendedor', 'operacional')
+def obter_contrato(id):
+    return jsonify(_contrato_dict(Contrato.query.get_or_404(id)))
+
+
+@app.route('/api/contratos/<int:id>', methods=['PUT'])
+@require_role('admin', 'vendedor')
+def atualizar_contrato(id):
+    c = Contrato.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['valor_servico', 'valor_seguro', 'condicoes_pagamento', 'observacoes_contratuais']:
+        if f in data:
+            setattr(c, f, data[f])
+    if 'status' in data:
+        c.status = data['status']
+    db.session.commit()
+    return jsonify(_contrato_dict(c))
+
+
+@app.route('/api/contratos/<int:id>/gerar-os', methods=['POST'])
+@require_role('admin', 'vendedor', 'operacional')
+def gerar_os_do_contrato(id):
+    c = Contrato.query.get_or_404(id)
+    if c.status == 'rascunho':
+        return err("Contrato ainda em rascunho. Confirme antes de gerar OS.")
+    if OrdemServico.query.filter_by(contrato_id=id).first():
+        return err("OS já existe para este contrato")
+
+    numero = Contador.proximo('os')
+    os_ = OrdemServico(
+        numero=numero, contrato_id=c.id, cliente=c.cliente, cliente_id=c.cliente_id,
+        tipo_servico=c.tipo_servico,
+        endereco_origem=c.endereco_origem, endereco_destino=c.endereco_destino,
+        data_mudanca=c.data_execucao,
+        valor_total=c.valor,
+        status='agendada'
+    )
+    db.session.add(os_)
+    db.session.flush()
+
+    pdf = _gerar_pdf_os(os_)
+    ano = datetime.utcnow().year
+    url = _salvar_drive(pdf, f"OS/{ano}", f"{numero}.pdf")
+    if url:
+        os_.drive_url = url
+
+    db.session.commit()
+    return jsonify(_os_dict(os_)), 201
+
+
+# ── ORDENS DE SERVIÇO ─────────────────────────────────────────────────────────
+@app.route('/api/os', methods=['GET'])
+@require_role('admin', 'vendedor', 'operacional')
+def listar_os():
+    status_f = request.args.get('status', '')
+    query = OrdemServico.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    return jsonify([_os_dict(o) for o in query.order_by(OrdemServico.created_at.desc()).all()])
+
+
+@app.route('/api/os/<int:id>', methods=['GET'])
+@require_role('admin', 'vendedor', 'operacional')
+def obter_os(id):
+    return jsonify(_os_dict(OrdemServico.query.get_or_404(id)))
+
+
+@app.route('/api/os', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_os():
+    data = request.json or {}
+    if not data.get('cliente'):
+        return err("cliente é obrigatório")
+    numero = Contador.proximo('os')
+    data_m = None
+    if data.get('data_mudanca'):
+        try:
+            data_m = datetime.fromisoformat(data['data_mudanca'])
+        except ValueError:
+            pass
+    os_ = OrdemServico(
+        numero=numero, contrato_id=data.get('contrato_id'),
+        cliente=data['cliente'], cliente_id=data.get('cliente_id'),
+        tipo_servico=data.get('tipo_servico', 'residencial'),
+        endereco_origem=data.get('endereco_origem', ''),
+        endereco_destino=data.get('endereco_destino', ''),
+        data_mudanca=data_m,
+        hora_inicio=data.get('hora_inicio', ''),
+        hora_fim_estimada=data.get('hora_fim_estimada', ''),
+        motorista=data.get('motorista', ''),
+        veiculo=data.get('veiculo', ''),
+        equipe=data.get('equipe', ''),
+        quantidade_ajudantes=int(data.get('quantidade_ajudantes', 0)),
+        quantidade_dias=int(data.get('quantidade_dias', 1)),
+        materiais_previstos=data.get('materiais_previstos', ''),
+        checklist=data.get('checklist', ''),
+        observacoes_operacionais=data.get('observacoes_operacionais', ''),
+        valor_total=float(data.get('valor_total', 0)),
+        status='agendada'
+    )
+    db.session.add(os_)
+    db.session.commit()
+    _sync_programacao_os(os_)
+    db.session.commit()
+    return jsonify(_os_dict(os_)), 201
+
+
+@app.route('/api/os/<int:id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_os(id):
+    os_ = OrdemServico.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['motorista', 'veiculo', 'equipe', 'hora_inicio', 'hora_fim_estimada',
+              'hora_inicio_real', 'hora_fim_real', 'quantidade_ajudantes', 'quantidade_dias',
+              'materiais_previstos', 'materiais_usados', 'checklist', 'observacoes_operacionais',
+              'ocorrencias', 'observacoes_finais']:
+        if f in data:
+            setattr(os_, f, data[f])
+    if 'valor_total' in data:
+        os_.valor_total = float(data['valor_total'])
+    if 'data_mudanca' in data and data['data_mudanca']:
+        try:
+            os_.data_mudanca = datetime.fromisoformat(data['data_mudanca'])
+        except ValueError:
+            pass
+    db.session.commit()
+    _sync_programacao_os(os_)
+    db.session.commit()
+    return jsonify(_os_dict(os_))
+
+
+@app.route('/api/os/<int:id>/iniciar', methods=['POST'])
+@require_role('admin', 'operacional')
+def iniciar_os(id):
+    os_ = OrdemServico.query.get_or_404(id)
+    if os_.status != 'agendada':
+        return err("OS deve estar agendada para iniciar")
+    os_.status = 'em_andamento'
+    os_.hora_inicio_real = datetime.utcnow().strftime('%H:%M')
+    db.session.commit()
+    return jsonify(_os_dict(os_))
+
+
+@app.route('/api/os/<int:id>/concluir', methods=['POST'])
+@require_role('admin', 'operacional')
+def concluir_os(id):
+    os_ = OrdemServico.query.get_or_404(id)
+    if os_.status != 'em_andamento':
+        return err("OS deve estar em andamento para concluir")
+    data = request.json or {}
+    os_.status = 'concluida'
+    os_.hora_fim_real = datetime.utcnow().strftime('%H:%M')
+    if 'valor_total' in data:
+        os_.valor_total = float(data['valor_total'])
+    if 'materiais_usados' in data:
+        os_.materiais_usados = data['materiais_usados']
+    if 'ocorrencias' in data:
+        os_.ocorrencias = data['ocorrencias']
+    if 'observacoes_finais' in data:
+        os_.observacoes_finais = data['observacoes_finais']
+
+    # Desconta estoque automaticamente
+    _descontar_estoque(os_)
+
+    # Gera recibo automaticamente
+    numero_rec = Contador.proximo('rec')
+    rec = Recibo(
+        numero=numero_rec, os_id=os_.id,
+        cliente=os_.cliente, cliente_id=os_.cliente_id,
+        servico_realizado=f"Mudança {os_.tipo_servico} - {os_.endereco_origem} → {os_.endereco_destino}",
+        valor_cobrado=os_.valor_total,
+        status='pendente'
+    )
+    db.session.add(rec)
+    db.session.flush()
+
+    pdf = _gerar_pdf_recibo(rec)
+    ano = datetime.utcnow().year
+    url = _salvar_drive(pdf, f"Recibos/{ano}", f"{numero_rec}.pdf")
+    if url:
+        rec.drive_url = url
+
+    db.session.commit()
+    return jsonify({"os": _os_dict(os_), "recibo": _recibo_dict(rec)})
+
+
+def _descontar_estoque(os_):
+    if not os_.materiais_usados:
+        return
+    try:
+        materiais = json.loads(os_.materiais_usados) if isinstance(os_.materiais_usados, str) else os_.materiais_usados
+        for item in materiais:
+            nome = item.get('material') or item.get('nome')
+            qtd = int(item.get('quantidade', 0))
+            if not nome or qtd <= 0:
+                continue
+            e = Estoque.query.filter(Estoque.material.ilike(f'%{nome}%')).first()
+            if e:
+                e.quantidade = max(0, e.quantidade - qtd)
+                db.session.add(MovimentacaoEstoque(
+                    estoque_id=e.id, os_id=os_.id,
+                    tipo='saida', quantidade=qtd,
+                    observacao=f"OS {os_.numero}"
+                ))
+    except Exception as ex:
+        logger.error(f"Estoque desconto error: {ex}")
+
+
+@app.route('/api/os/<int:id>/cancelar', methods=['POST'])
+@require_role('admin', 'operacional')
+def cancelar_os(id):
+    os_ = OrdemServico.query.get_or_404(id)
+    os_.status = 'cancelada'
+    db.session.commit()
+    return jsonify(_os_dict(os_))
+
+
+# ── ETAPAS OPERACIONAIS ───────────────────────────────────────────────────────
+def _etapa_dict(e):
+    return {
+        "id": e.id, "os_id": e.os_id,
+        "data": e.data.isoformat() if e.data else None,
+        "tipo": e.tipo,
+        "quantidade_ajudantes": e.quantidade_ajudantes,
+        "quantidade_caminhoes": e.quantidade_caminhoes,
+        "equipe": e.equipe, "veiculos": e.veiculos,
+        "observacoes": e.observacoes, "status": e.status,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+    }
+
+
+@app.route('/api/os/<int:id>/etapas', methods=['GET'])
+@require_role('admin', 'operacional', 'vendedor')
+def listar_etapas(id):
+    OrdemServico.query.get_or_404(id)
+    etapas = EtapaOperacional.query.filter_by(os_id=id).order_by(EtapaOperacional.data).all()
+    return jsonify([_etapa_dict(e) for e in etapas])
+
+
+@app.route('/api/os/<int:id>/etapas', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_etapa(id):
+    OrdemServico.query.get_or_404(id)
+    data = request.json or {}
+    data_e = None
+    if data.get('data'):
+        try:
+            data_e = datetime.fromisoformat(data['data'])
+        except ValueError:
+            pass
+    e = EtapaOperacional(
+        os_id=id,
+        data=data_e,
+        tipo=data.get('tipo', 'transporte'),
+        quantidade_ajudantes=int(data.get('quantidade_ajudantes', 0)),
+        quantidade_caminhoes=int(data.get('quantidade_caminhoes', 0)),
+        equipe=data.get('equipe', ''),
+        veiculos=data.get('veiculos', ''),
+        observacoes=data.get('observacoes', ''),
+        status=data.get('status', 'agendada'),
+    )
+    db.session.add(e)
+    db.session.commit()
+    # Sincroniza programação
+    _sync_programacao_etapa(e)
+    return jsonify(_etapa_dict(e)), 201
+
+
+@app.route('/api/os/<int:os_id>/etapas/<int:etapa_id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_etapa(os_id, etapa_id):
+    e = EtapaOperacional.query.filter_by(id=etapa_id, os_id=os_id).first_or_404()
+    data = request.json or {}
+    for f in ['tipo', 'quantidade_ajudantes', 'quantidade_caminhoes', 'equipe', 'veiculos', 'observacoes', 'status']:
+        if f in data:
+            setattr(e, f, data[f])
+    if data.get('data'):
+        try:
+            e.data = datetime.fromisoformat(data['data'])
+        except ValueError:
+            pass
+    db.session.commit()
+    _sync_programacao_etapa(e)
+    return jsonify(_etapa_dict(e))
+
+
+@app.route('/api/os/<int:os_id>/etapas/<int:etapa_id>', methods=['DELETE'])
+@require_role('admin', 'operacional')
+def deletar_etapa(os_id, etapa_id):
+    e = EtapaOperacional.query.filter_by(id=etapa_id, os_id=os_id).first_or_404()
+    db.session.delete(e)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+def _sync_programacao_os(os_):
+    """Cria/atualiza entrada na programação quando uma OS tem data_mudanca."""
+    if not os_ or not os_.data_mudanca:
+        return
+    dt = os_.data_mudanca
+    semana = dt.isocalendar()[1]
+    ano = dt.year
+    # Verifica se já existe programação para essa OS no mesmo dia
+    existente = Programacao.query.filter_by(os_id=os_.id).first()
+    if existente:
+        existente.data = dt
+        existente.cliente = os_.cliente
+        existente.equipe = os_.equipe or ''
+        existente.veiculo = os_.veiculo or ''
+        existente.semana = semana
+        existente.ano = ano
+    else:
+        prog = Programacao(
+            os_id=os_.id, cliente=os_.cliente,
+            data=dt, equipe=os_.equipe or '',
+            veiculo=os_.veiculo or '',
+            status='agendado', semana=semana, ano=ano,
+        )
+        db.session.add(prog)
+
+
+def _sync_programacao_etapa(etapa):
+    os_ = OrdemServico.query.get(etapa.os_id)
+    if not os_ or not etapa.data:
+        return
+    semana = etapa.data.isocalendar()[1]
+    ano = etapa.data.year
+    # Remove programação existente para mesma etapa
+    for p in Programacao.query.filter_by(os_id=etapa.os_id).all():
+        if p.data and p.data.date() == etapa.data.date():
+            db.session.delete(p)
+    prog = Programacao(
+        os_id=os_.id, cliente=os_.cliente,
+        data=etapa.data, equipe=etapa.equipe or '',
+        veiculo=etapa.veiculos or '',
+        status='agendado', semana=semana, ano=ano,
+    )
+    db.session.add(prog)
+    db.session.commit()
+
+
+# ── FECHAMENTO OPERACIONAL ────────────────────────────────────────────────────
+def _fechamento_dict(f):
+    return {
+        "id": f.id, "os_id": f.os_id, "organizer_id": f.organizer_id,
+        "receita_bruta": f.receita_bruta,
+        "custo_equipe": f.custo_equipe, "custo_caminhoes": f.custo_caminhoes,
+        "custo_materiais": f.custo_materiais, "custo_pedagio": f.custo_pedagio,
+        "custo_alimentacao": f.custo_alimentacao, "custo_hospedagem": f.custo_hospedagem,
+        "custo_freelancers": f.custo_freelancers, "custo_outros": f.custo_outros,
+        "lucro_liquido": f.lucro_liquido, "margem_percentual": f.margem_percentual,
+        "comissao_organizer": f.comissao_organizer,
+        "percentual_comissao": f.percentual_comissao,
+        "observacoes": f.observacoes, "status": f.status,
+        "custo_total": (
+            (f.custo_equipe or 0) + (f.custo_caminhoes or 0) +
+            (f.custo_materiais or 0) + (f.custo_pedagio or 0) +
+            (f.custo_alimentacao or 0) + (f.custo_hospedagem or 0) +
+            (f.custo_freelancers or 0) + (f.custo_outros or 0)
+        ),
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
+@app.route('/api/os/<int:id>/fechamento', methods=['GET'])
+@require_role('admin', 'financeiro', 'operacional')
+def get_fechamento(id):
+    os_ = OrdemServico.query.get_or_404(id)
+    f = FechamentoOperacional.query.filter_by(os_id=id).first()
+    if not f:
+        # Cria esboço com dados da OS
+        rec = Recibo.query.filter_by(os_id=id, status='recebido').first()
+        f = FechamentoOperacional(
+            os_id=id,
+            receita_bruta=rec.valor_cobrado if rec else os_.valor_total or 0,
+            status='rascunho',
+        )
+        # Tenta detectar organizer via cliente
+        if os_.cliente_id:
+            cli = Cliente.query.get(os_.cliente_id)
+            if cli and cli.organizer_id:
+                f.organizer_id = cli.organizer_id
+        db.session.add(f)
+        db.session.commit()
+    return jsonify(_fechamento_dict(f))
+
+
+@app.route('/api/os/<int:id>/fechamento', methods=['PUT'])
+@require_role('admin', 'financeiro')
+def salvar_fechamento(id):
+    OrdemServico.query.get_or_404(id)
+    f = FechamentoOperacional.query.filter_by(os_id=id).first()
+    if not f:
+        f = FechamentoOperacional(os_id=id)
+        db.session.add(f)
+    data = request.json or {}
+    for field in ['receita_bruta', 'custo_equipe', 'custo_caminhoes', 'custo_materiais',
+                  'custo_pedagio', 'custo_alimentacao', 'custo_hospedagem',
+                  'custo_freelancers', 'custo_outros', 'percentual_comissao']:
+        if field in data:
+            setattr(f, field, float(data[field] or 0))
+    if 'organizer_id' in data:
+        f.organizer_id = data['organizer_id'] or None
+    if 'observacoes' in data:
+        f.observacoes = data['observacoes']
+    if 'status' in data and data['status'] in ('rascunho', 'finalizado'):
+        f.status = data['status']
+    f.calcular()
+    db.session.commit()
+    return jsonify(_fechamento_dict(f))
+
+
+@app.route('/api/os/<int:id>/fechamento/finalizar', methods=['POST'])
+@require_role('admin', 'financeiro')
+def finalizar_fechamento(id):
+    OrdemServico.query.get_or_404(id)
+    f = FechamentoOperacional.query.filter_by(os_id=id).first_or_404()
+    f.calcular()
+    f.status = 'finalizado'
+    # Cria ou atualiza comissão da organizer
+    if f.organizer_id and f.comissao_organizer > 0:
+        comissao = Comissao.query.filter_by(fechamento_id=f.id).first()
+        if not comissao:
+            comissao = Comissao(
+                organizer_id=f.organizer_id, os_id=id,
+                fechamento_id=f.id,
+                valor=f.comissao_organizer,
+                percentual=f.percentual_comissao,
+                status='pendente',
+            )
+            db.session.add(comissao)
+        else:
+            comissao.valor = f.comissao_organizer
+            comissao.percentual = f.percentual_comissao
+        # Recalcula classificação da organizer
+        org = Organizer.query.get(f.organizer_id)
+        if org:
+            _classificar_organizer(org)
+    db.session.commit()
+    return jsonify(_fechamento_dict(f))
+
+
+@app.route('/api/fechamentos', methods=['GET'])
+@require_role('admin', 'financeiro')
+def listar_fechamentos():
+    status_f = request.args.get('status', '')
+    q = FechamentoOperacional.query
+    if status_f:
+        q = q.filter_by(status=status_f)
+    return jsonify([_fechamento_dict(f) for f in q.order_by(FechamentoOperacional.created_at.desc()).all()])
+
+
+@app.route('/api/comissoes/<int:id>/pagar', methods=['POST'])
+@require_role('admin', 'financeiro')
+def pagar_comissao(id):
+    c = Comissao.query.get_or_404(id)
+    data = request.json or {}
+    c.status = 'pago'
+    c.data_pagamento = datetime.utcnow()
+    if 'observacoes' in data:
+        c.observacoes = data['observacoes']
+    db.session.commit()
+    return jsonify({"id": c.id, "status": c.status, "valor": c.valor,
+                    "data_pagamento": c.data_pagamento.isoformat()})
+
+
+# ── PROGRAMAÇÃO ───────────────────────────────────────────────────────────────
+@app.route('/api/programacao', methods=['GET'])
+@require_role('admin', 'operacional', 'vendedor')
+def listar_programacao():
+    semana = request.args.get('semana', type=int)
+    ano = request.args.get('ano', type=int)
+    query = Programacao.query
+    if semana:
+        query = query.filter_by(semana=semana)
+    if ano:
+        query = query.filter_by(ano=ano)
+    items = query.order_by(Programacao.data).all()
+    return jsonify([{
+        "id": p.id, "os_id": p.os_id, "cliente": p.cliente,
+        "data": p.data.isoformat() if p.data else None,
+        "equipe": p.equipe, "veiculo": p.veiculo,
+        "status": p.status, "semana": p.semana, "ano": p.ano,
+    } for p in items])
+
+
+@app.route('/api/programacao/sync', methods=['POST'])
+@require_role('admin', 'operacional')
+def sync_programacao():
+    """Sincroniza todas as OS com data_mudanca para a tabela de programação."""
+    os_list = OrdemServico.query.filter(
+        OrdemServico.data_mudanca != None,
+        OrdemServico.status.in_(['agendada', 'em_andamento'])
+    ).all()
+    count = 0
+    for os_ in os_list:
+        _sync_programacao_os(os_)
+        count += 1
+    db.session.commit()
+    return jsonify({"sincronizadas": count})
+
+
+@app.route('/api/programacao', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_programacao():
+    data = request.json or {}
+    if not data.get('cliente'):
+        return err("cliente é obrigatório")
+    dt = None
+    if data.get('data'):
+        try:
+            dt = datetime.fromisoformat(data['data'])
+        except ValueError:
+            pass
+    p = Programacao(
+        os_id=data.get('os_id'), cliente=data['cliente'],
+        data=dt, equipe=data.get('equipe', ''), veiculo=data.get('veiculo', ''),
+        status='agendado',
+        semana=dt.isocalendar()[1] if dt else None,
+        ano=dt.year if dt else None
+    )
+    db.session.add(p)
+    db.session.commit()
+    return jsonify({"id": p.id, "cliente": p.cliente}), 201
+
+
+@app.route('/api/programacao/<int:id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_programacao(id):
+    p = Programacao.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['cliente', 'equipe', 'veiculo', 'status']:
+        if f in data:
+            setattr(p, f, data[f])
+    if 'data' in data and data['data']:
+        try:
+            dt = datetime.fromisoformat(data['data'])
+            p.data = dt
+            p.semana = dt.isocalendar()[1]
+            p.ano = dt.year
+        except ValueError:
+            pass
+    db.session.commit()
+    return jsonify({"id": p.id, "status": p.status})
+
+
+@app.route('/api/programacao/<int:id>', methods=['DELETE'])
+@require_role('admin', 'operacional')
+def deletar_programacao(id):
+    p = Programacao.query.get_or_404(id)
+    db.session.delete(p)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+# ── ESTOQUE ───────────────────────────────────────────────────────────────────
+@app.route('/api/estoque', methods=['GET'])
+@jwt_required()
+def listar_estoque():
+    items = Estoque.query.order_by(Estoque.material).all()
+    alertas = [e for e in items if e.alerta]
+    return jsonify({
+        "items": [_estoque_dict(e) for e in items],
+        "alertas_criticos": [_estoque_dict(e) for e in alertas if e.alerta == 'critico'],
+        "alertas_baixo": [_estoque_dict(e) for e in alertas if e.alerta == 'baixo'],
+    })
+
+
+@app.route('/api/estoque', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_estoque():
+    data = request.json or {}
+    if not data.get('material'):
+        return err("material é obrigatório")
+    e = Estoque(
+        material=data['material'], unidade=data.get('unidade', 'un'),
+        quantidade=int(data.get('quantidade', 0)),
+        estoque_minimo=int(data.get('estoque_minimo', 10)),
+        estoque_critico=int(data.get('estoque_critico', 5)),
+        valor_unitario=float(data.get('valor_unitario', 0))
+    )
+    db.session.add(e)
+    db.session.commit()
+    return jsonify(_estoque_dict(e)), 201
+
+
+@app.route('/api/estoque/<int:id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_estoque(id):
+    e = Estoque.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['material', 'unidade', 'estoque_minimo', 'estoque_critico', 'valor_unitario']:
+        if f in data:
+            setattr(e, f, data[f])
+    if 'quantidade' in data:
+        e.quantidade = int(data['quantidade'])
+    db.session.commit()
+    return jsonify(_estoque_dict(e))
+
+
+@app.route('/api/estoque/<int:id>/entrada', methods=['POST'])
+@require_role('admin', 'operacional')
+def entrada_estoque(id):
+    e = Estoque.query.get_or_404(id)
+    data = request.json or {}
+    qtd = int(data.get('quantidade', 0))
+    if qtd <= 0:
+        return err("quantidade deve ser positiva")
+    e.quantidade += qtd
+    db.session.add(MovimentacaoEstoque(
+        estoque_id=e.id, tipo='entrada', quantidade=qtd,
+        observacao=data.get('observacao', 'Entrada manual')
+    ))
+    db.session.commit()
+    return jsonify(_estoque_dict(e))
+
+
+@app.route('/api/estoque/<int:id>/saida', methods=['POST'])
+@require_role('admin', 'operacional')
+def saida_estoque(id):
+    e = Estoque.query.get_or_404(id)
+    data = request.json or {}
+    qtd = int(data.get('quantidade', 0))
+    if qtd <= 0:
+        return err("quantidade deve ser positiva")
+    if e.quantidade < qtd:
+        return err("Estoque insuficiente")
+    e.quantidade -= qtd
+    db.session.add(MovimentacaoEstoque(
+        estoque_id=e.id, tipo='saida', quantidade=qtd,
+        observacao=data.get('observacao', 'Saída manual')
+    ))
+    db.session.commit()
+    return jsonify(_estoque_dict(e))
+
+
+@app.route('/api/estoque/<int:id>/movimentacoes', methods=['GET'])
+@jwt_required()
+def movimentacoes_estoque(id):
+    Estoque.query.get_or_404(id)
+    movs = MovimentacaoEstoque.query.filter_by(estoque_id=id).order_by(MovimentacaoEstoque.created_at.desc()).all()
+    return jsonify([{
+        "id": m.id, "tipo": m.tipo, "quantidade": m.quantidade,
+        "os_id": m.os_id, "observacao": m.observacao,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+    } for m in movs])
+
+
+# ── GUARDA-MÓVEIS ─────────────────────────────────────────────────────────────
+@app.route('/api/guarda-moveis', methods=['GET'])
+@jwt_required()
+def listar_boxes():
+    boxes = GuardaMovel.query.order_by(GuardaMovel.id).all()
+    now = datetime.utcnow()
+    receita = sum(b.valor_mensal for b in boxes if b.status == 'ocupado')
+    vencendo = [b for b in boxes if b.status == 'ocupado' and b.data_saida_prevista
+                and b.data_saida_prevista <= now + timedelta(days=30)]
+    return jsonify({
+        "boxes": [_box_dict(b) for b in boxes],
+        "receita_mensal_total": receita,
+        "total": len(boxes),
+        "ocupados": sum(1 for b in boxes if b.status == 'ocupado'),
+        "livres": sum(1 for b in boxes if b.status == 'livre'),
+        "manutencao": sum(1 for b in boxes if b.status == 'manutencao'),
+        "vencendo_30dias": len(vencendo),
+        "taxa_ocupacao": round(sum(1 for b in boxes if b.status == 'ocupado') / len(boxes) * 100, 1) if boxes else 0,
+    })
+
+
+@app.route('/api/guarda-moveis', methods=['POST'])
+@jwt_required()
+def criar_box():
+    data = request.json or {}
+    total = GuardaMovel.query.count()
+    numero = data.get('numero') or f"Box {total + 1}"
+    box = GuardaMovel(numero=numero, status='livre')
+    db.session.add(box)
+    db.session.commit()
+    return jsonify(_box_dict(box)), 201
+
+
+@app.route('/api/guarda-moveis/<int:id>/ocupar', methods=['POST'])
+@jwt_required()
+def ocupar_box(id):
+    data = request.json or {}
+    box = GuardaMovel.query.get_or_404(id)
+    if box.status == 'ocupado':
+        return err("Box já está ocupado", 400)
+    box.status = 'ocupado'
+    box.cliente_nome = data.get('cliente_nome', '')
+    box.cliente_id = data.get('cliente_id')
+    box.valor_mensal = float(data.get('valor_mensal', 380))
+    if data.get('metros_quadrados') is not None:
+        box.metros_quadrados = float(data['metros_quadrados'])
+    if data.get('metros_cubicos') is not None:
+        box.metros_cubicos = float(data['metros_cubicos'])
+    box.data_entrada = datetime.utcnow()
+    box.observacoes = data.get('observacoes', '')
+    if data.get('data_saida_prevista'):
+        try:
+            box.data_saida_prevista = datetime.fromisoformat(data['data_saida_prevista'])
+        except ValueError:
+            pass
+    db.session.commit()
+    return jsonify(_box_dict(box))
+
+
+@app.route('/api/guarda-moveis/<int:id>/liberar', methods=['POST'])
+@jwt_required()
+def liberar_box(id):
+    box = GuardaMovel.query.get_or_404(id)
+    box.status = 'livre'
+    box.cliente_nome = None
+    box.cliente_id = None
+    box.valor_mensal = 0
+    box.metros_quadrados = None
+    box.metros_cubicos = None
+    box.data_entrada = None
+    box.data_saida_prevista = None
+    db.session.commit()
+    return jsonify(_box_dict(box))
+
+
+@app.route('/api/guarda-moveis/<int:id>/manutencao', methods=['POST'])
+@jwt_required()
+def manutencao_box(id):
+    box = GuardaMovel.query.get_or_404(id)
+    box.status = 'manutencao'
+    db.session.commit()
+    return jsonify(_box_dict(box))
+
+
+# ── AVARIAS ───────────────────────────────────────────────────────────────────
+def _avaria_dict(a):
+    return {
+        "id": a.id, "os_id": a.os_id, "os_numero": a.os_numero,
+        "cliente": a.cliente, "cliente_id": a.cliente_id,
+        "data_mudanca": a.data_mudanca.isoformat() if a.data_mudanca else None,
+        "equipe": a.equipe, "veiculo": a.veiculo,
+        "organizer_id": a.organizer_id,
+        "tipo": a.tipo, "descricao": a.descricao,
+        "valor_estimado": a.valor_estimado,
+        "observacoes": a.observacoes,
+        "status": a.status,
+        "data_resolucao": a.data_resolucao.isoformat() if a.data_resolucao else None,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+@app.route('/api/avarias', methods=['GET'])
+@jwt_required()
+def listar_avarias():
+    status_f = request.args.get('status', '')
+    query = Avaria.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    return jsonify([_avaria_dict(a) for a in query.order_by(Avaria.created_at.desc()).all()])
+
+
+@app.route('/api/avarias', methods=['POST'])
+@jwt_required()
+def criar_avaria():
+    data = request.json or {}
+    if not data.get('cliente'):
+        return err("cliente é obrigatório")
+    a = Avaria(
+        os_id=data.get('os_id'),
+        os_numero=data.get('os_numero', ''),
+        cliente=data['cliente'],
+        cliente_id=data.get('cliente_id'),
+        equipe=data.get('equipe', ''),
+        veiculo=data.get('veiculo', ''),
+        organizer_id=data.get('organizer_id'),
+        tipo=data.get('tipo', 'outro'),
+        descricao=data.get('descricao', ''),
+        valor_estimado=float(data.get('valor_estimado', 0)),
+        observacoes=data.get('observacoes', ''),
+        status='aberta',
+    )
+    if data.get('data_mudanca'):
+        try:
+            a.data_mudanca = datetime.fromisoformat(data['data_mudanca'])
+        except ValueError:
+            pass
+    db.session.add(a)
+    db.session.commit()
+    return jsonify(_avaria_dict(a)), 201
+
+
+@app.route('/api/avarias/<int:id>', methods=['GET'])
+@jwt_required()
+def obter_avaria(id):
+    return jsonify(_avaria_dict(Avaria.query.get_or_404(id)))
+
+
+@app.route('/api/avarias/<int:id>', methods=['PUT'])
+@jwt_required()
+def atualizar_avaria(id):
+    a = Avaria.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['tipo', 'descricao', 'observacoes', 'equipe', 'veiculo', 'status']:
+        if f in data:
+            setattr(a, f, data[f])
+    if 'valor_estimado' in data:
+        a.valor_estimado = float(data['valor_estimado'] or 0)
+    if 'organizer_id' in data:
+        a.organizer_id = data['organizer_id'] or None
+    if data.get('status') in ('resolvida', 'encerrada') and not a.data_resolucao:
+        a.data_resolucao = datetime.utcnow()
+    db.session.commit()
+    return jsonify(_avaria_dict(a))
+
+
+@app.route('/api/avarias/<int:id>', methods=['DELETE'])
+@require_role('admin')
+def deletar_avaria(id):
+    a = Avaria.query.get_or_404(id)
+    db.session.delete(a)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+@app.route('/api/avarias/resumo', methods=['GET'])
+@jwt_required()
+def resumo_avarias():
+    total = Avaria.query.count()
+    abertas = Avaria.query.filter_by(status='aberta').count()
+    em_analise = Avaria.query.filter_by(status='em_analise').count()
+    resolvidas = Avaria.query.filter_by(status='resolvida').count() + Avaria.query.filter_by(status='encerrada').count()
+    valor_total = db.session.query(db.func.sum(Avaria.valor_estimado)).scalar() or 0
+    # Avarias por tipo
+    from sqlalchemy import func
+    por_tipo = db.session.query(Avaria.tipo, func.count(Avaria.id)).group_by(Avaria.tipo).all()
+    return jsonify({
+        "total": total, "abertas": abertas, "em_analise": em_analise,
+        "resolvidas": resolvidas, "valor_total_estimado": float(valor_total),
+        "por_tipo": {t: c for t, c in por_tipo},
+    })
+
+
+# ── ADMIN / CONTROLADORIA ─────────────────────────────────────────────────────
+@app.route('/api/admin/atividade', methods=['POST'])
+@jwt_required()
+def registrar_atividade():
+    """Frontend envia heartbeats e pageviews aqui."""
+    u = current_user()
+    if not u:
+        return err("Unauthorized", 401)
+    data = request.json or {}
+    log = UserActivityLog(
+        user_id=u.id,
+        page=data.get('page', '/'),
+        action=data.get('action', 'heartbeat'),
+        session_id=data.get('session_id', ''),
+    )
+    db.session.add(log)
+    # Limpa logs > 30 dias para não acumular indefinidamente
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    UserActivityLog.query.filter(UserActivityLog.timestamp < cutoff).delete()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/admin/atividade', methods=['GET'])
+@require_role('admin')
+def relatorio_atividade():
+    """Retorna relatório de atividade dos usuários para a Controladoria."""
+    from sqlalchemy import func
+    agora = datetime.utcnow()
+    cinco_min = agora - timedelta(minutes=5)
+    uma_hora = agora - timedelta(hours=1)
+    hoje = agora.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Todos os usuários
+    usuarios = User.query.all()
+    resultado = []
+    for u in usuarios:
+        # Online agora (heartbeat nos últimos 5 min)
+        online = UserActivityLog.query.filter(
+            UserActivityLog.user_id == u.id,
+            UserActivityLog.timestamp >= cinco_min
+        ).count() > 0
+
+        # Último acesso
+        ultimo_log = (UserActivityLog.query
+                      .filter_by(user_id=u.id)
+                      .order_by(UserActivityLog.timestamp.desc())
+                      .first())
+
+        # Página atual (último heartbeat/pageview)
+        pagina_atual = ultimo_log.page if ultimo_log else None
+
+        # Total de ações hoje
+        acoes_hoje = UserActivityLog.query.filter(
+            UserActivityLog.user_id == u.id,
+            UserActivityLog.timestamp >= hoje
+        ).count()
+
+        # Pages mais visitadas hoje
+        pages_hoje = (db.session.query(
+            UserActivityLog.page, func.count(UserActivityLog.id).label('c')
+        ).filter(
+            UserActivityLog.user_id == u.id,
+            UserActivityLog.timestamp >= hoje,
+            UserActivityLog.action == 'pageview'
+        ).group_by(UserActivityLog.page)
+         .order_by(func.count(UserActivityLog.id).desc())
+         .limit(5).all())
+
+        resultado.append({
+            "id": u.id,
+            "nome": u.name,
+            "role": u.role,
+            "online": online,
+            "pagina_atual": pagina_atual,
+            "ultimo_acesso": ultimo_log.timestamp.isoformat() if ultimo_log else None,
+            "acoes_hoje": acoes_hoje,
+            "pages_hoje": [{"page": p, "visitas": c} for p, c in pages_hoje],
+        })
+
+    # Usuários online primeiro, depois por último acesso
+    resultado.sort(key=lambda x: (not x['online'], x['ultimo_acesso'] or ''))
+
+    # Timeline das últimas 2h (atividade por hora/quinze min)
+    logs_2h = UserActivityLog.query.filter(
+        UserActivityLog.timestamp >= (agora - timedelta(hours=2))
+    ).order_by(UserActivityLog.timestamp).all()
+
+    # Agrega por janelas de 15 min
+    from collections import defaultdict
+    buckets = defaultdict(int)
+    for log in logs_2h:
+        mins = (log.timestamp - (agora - timedelta(hours=2))).seconds // 60
+        bucket = (mins // 15) * 15
+        buckets[bucket] += 1
+    timeline = [{"min": k, "acoes": v} for k, v in sorted(buckets.items())]
+
+    return jsonify({
+        "usuarios": resultado,
+        "total_online": sum(1 for u in resultado if u['online']),
+        "timeline_2h": timeline,
+        "timestamp": agora.isoformat(),
+    })
+
+
+# ── RECIBOS ───────────────────────────────────────────────────────────────────
+@app.route('/api/recibos', methods=['GET'])
+@require_role('admin', 'financeiro', 'vendedor')
+def listar_recibos():
+    status_f = request.args.get('status', '')
+    query = Recibo.query
+    if status_f and status_f != 'todos':
+        query = query.filter_by(status=status_f)
+    return jsonify([_recibo_dict(r) for r in query.order_by(Recibo.created_at.desc()).all()])
+
+
+@app.route('/api/recibos/<int:id>', methods=['GET'])
+@require_role('admin', 'financeiro', 'vendedor')
+def obter_recibo(id):
+    return jsonify(_recibo_dict(Recibo.query.get_or_404(id)))
+
+
+@app.route('/api/recibos', methods=['POST'])
+@require_role('admin', 'financeiro')
+def criar_recibo():
+    data = request.json or {}
+    if not data.get('cliente'):
+        return err("cliente é obrigatório")
+    numero = Contador.proximo('rec')
+    r = Recibo(
+        numero=numero, os_id=data.get('os_id'),
+        cliente=data['cliente'], cliente_id=data.get('cliente_id'),
+        servico_realizado=data.get('servico_realizado', ''),
+        valor_cobrado=float(data.get('valor_cobrado', 0)),
+        forma_pagamento=data.get('forma_pagamento', ''),
+        observacoes=data.get('observacoes', ''),
+        status='pendente'
+    )
+    if data.get('data_pagamento'):
+        try:
+            r.data_pagamento = datetime.fromisoformat(data['data_pagamento'])
+        except ValueError:
+            pass
+    db.session.add(r)
+    db.session.commit()
+    return jsonify(_recibo_dict(r)), 201
+
+
+@app.route('/api/recibos/<int:id>/receber', methods=['POST'])
+@require_role('admin', 'financeiro')
+def confirmar_recibo(id):
+    r = Recibo.query.get_or_404(id)
+    data = request.json or {}
+    r.status = 'recebido'
+    r.forma_pagamento = data.get('forma_pagamento', r.forma_pagamento)
+    if data.get('data_pagamento'):
+        try:
+            r.data_pagamento = datetime.fromisoformat(data['data_pagamento'])
+        except ValueError:
+            pass
+    if not r.data_pagamento:
+        r.data_pagamento = datetime.utcnow()
+    db.session.commit()
+    return jsonify(_recibo_dict(r))
+
+
+@app.route('/api/recibos/<int:id>', methods=['PUT'])
+@require_role('admin', 'financeiro')
+def atualizar_recibo(id):
+    r = Recibo.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['servico_realizado', 'valor_cobrado', 'forma_pagamento', 'observacoes', 'status']:
+        if f in data:
+            setattr(r, f, data[f])
+    if 'data_pagamento' in data and data['data_pagamento']:
+        try:
+            r.data_pagamento = datetime.fromisoformat(data['data_pagamento'])
+        except ValueError:
+            pass
+    db.session.commit()
+    return jsonify(_recibo_dict(r))
+
+
+# ── FINANCEIRO ────────────────────────────────────────────────────────────────
+@app.route('/api/financeiro/resumo', methods=['GET'])
+@require_role('admin', 'financeiro')
+def resumo_financeiro():
+    mes = request.args.get('mes', type=int, default=datetime.utcnow().month)
+    ano = request.args.get('ano', type=int, default=datetime.utcnow().year)
+
+    recibos = Recibo.query.filter(
+        Recibo.status == 'recebido',
+        extract('month', Recibo.data_pagamento) == mes,
+        extract('year', Recibo.data_pagamento) == ano
+    ).all()
+    receita_mudancas = sum(r.valor_cobrado for r in recibos)
+
+    boxes_ocu = GuardaMovel.query.filter_by(status='ocupado').all()
+    receita_guarda = sum(b.valor_mensal for b in boxes_ocu)
+
+    despesas = Despesa.query.filter(
+        extract('month', Despesa.data) == mes,
+        extract('year', Despesa.data) == ano
+    ).all()
+    total_despesas = sum(d.valor for d in despesas)
+
+    receita_total = receita_mudancas + receita_guarda
+    lucro = receita_total - total_despesas
+
+    return jsonify({
+        "mes": mes, "ano": ano,
+        "receita_mudancas": receita_mudancas,
+        "receita_guarda_moveis": receita_guarda,
+        "receita_total": receita_total,
+        "total_despesas": total_despesas,
+        "lucro_liquido": lucro,
+        "margem_percentual": round(lucro / receita_total * 100, 1) if receita_total > 0 else 0,
+        "mudancas_realizadas": len(recibos),
+        "ticket_medio": round(receita_mudancas / len(recibos), 2) if recibos else 0,
+        "despesas_detalhe": [{"categoria": d.categoria, "valor": d.valor,
+                               "descricao": d.descricao,
+                               "data": d.data.isoformat() if d.data else None} for d in despesas],
+    })
+
+
+@app.route('/api/financeiro/despesas', methods=['GET'])
+@require_role('admin', 'financeiro')
+def listar_despesas():
+    mes = request.args.get('mes', type=int)
+    ano = request.args.get('ano', type=int)
+    query = Despesa.query
+    if mes:
+        query = query.filter(extract('month', Despesa.data) == mes)
+    if ano:
+        query = query.filter(extract('year', Despesa.data) == ano)
+    despesas = query.order_by(Despesa.data.desc()).all()
+    return jsonify([{"id": d.id, "categoria": d.categoria, "descricao": d.descricao,
+                     "valor": d.valor, "os_id": d.os_id,
+                     "data": d.data.isoformat() if d.data else None} for d in despesas])
+
+
+@app.route('/api/financeiro/despesas', methods=['POST'])
+@require_role('admin', 'financeiro', 'operacional')
+def criar_despesa():
+    data = request.json or {}
+    if not data.get('categoria') or not data.get('valor'):
+        return err("categoria e valor são obrigatórios")
+    dt = datetime.utcnow()
+    if data.get('data'):
+        try:
+            dt = datetime.fromisoformat(data['data'])
+        except ValueError:
+            pass
+    d = Despesa(
+        categoria=data['categoria'], descricao=data.get('descricao', ''),
+        valor=float(data['valor']), data=dt, os_id=data.get('os_id')
+    )
+    db.session.add(d)
+    db.session.commit()
+    return jsonify({"id": d.id, "categoria": d.categoria, "valor": d.valor}), 201
+
+
+@app.route('/api/financeiro/despesas/<int:id>', methods=['PUT'])
+@require_role('admin', 'financeiro', 'operacional')
+def atualizar_despesa(id):
+    d = Despesa.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['categoria', 'descricao', 'valor', 'os_id']:
+        if f in data:
+            setattr(d, f, data[f])
+    if data.get('data'):
+        try:
+            d.data = datetime.fromisoformat(data['data'])
+        except ValueError:
+            pass
+    if 'valor' in data:
+        d.valor = float(data['valor'])
+    db.session.commit()
+    return jsonify({"id": d.id, "categoria": d.categoria, "descricao": d.descricao,
+                    "valor": d.valor, "data": d.data.isoformat() if d.data else None})
+
+
+@app.route('/api/financeiro/despesas/<int:id>', methods=['DELETE'])
+@require_role('admin', 'financeiro')
+def deletar_despesa(id):
+    d = Despesa.query.get_or_404(id)
+    db.session.delete(d)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+@app.route('/api/financeiro/historico', methods=['GET'])
+@require_role('admin', 'financeiro')
+def financeiro_historico():
+    """Retorna os últimos 12 meses de receita/despesas para gráficos."""
+    meses = []
+    now = datetime.utcnow()
+    for i in range(11, -1, -1):
+        if now.month - i <= 0:
+            m = now.month - i + 12
+            a = now.year - 1
+        else:
+            m = now.month - i
+            a = now.year
+        recibos = Recibo.query.filter(
+            Recibo.status == 'recebido',
+            extract('month', Recibo.data_pagamento) == m,
+            extract('year', Recibo.data_pagamento) == a
+        ).all()
+        receita = sum(r.valor_cobrado for r in recibos)
+        despesas = Despesa.query.filter(
+            extract('month', Despesa.data) == m,
+            extract('year', Despesa.data) == a
+        ).all()
+        total_desp = sum(d.valor for d in despesas)
+        mudancas_count = OrdemServico.query.filter(
+            OrdemServico.status == 'concluida',
+            extract('month', OrdemServico.data_mudanca) == m,
+            extract('year', OrdemServico.data_mudanca) == a
+        ).count()
+        meses.append({
+            "mes": m, "ano": a,
+            "label": f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m-1]}/{str(a)[2:]}",
+            "receita": receita,
+            "despesas": total_desp,
+            "lucro": receita - total_desp,
+            "mudancas": mudancas_count,
+        })
+    return jsonify(meses)
+
+
+# ── FECHAMENTO ────────────────────────────────────────────────────────────────
+@app.route('/api/fechamento/resumo', methods=['GET'])
+@require_role('admin', 'financeiro')
+def fechamento_resumo():
+    mes = request.args.get('mes', type=int, default=datetime.utcnow().month)
+    ano = request.args.get('ano', type=int, default=datetime.utcnow().year)
+
+    recibos = Recibo.query.filter(
+        Recibo.status == 'recebido',
+        extract('month', Recibo.data_pagamento) == mes,
+        extract('year', Recibo.data_pagamento) == ano
+    ).all()
+    receita_mudancas = sum(r.valor_cobrado for r in recibos)
+
+    boxes_ocu = GuardaMovel.query.filter_by(status='ocupado').all()
+    receita_guarda = sum(b.valor_mensal for b in boxes_ocu)
+
+    despesas = Despesa.query.filter(
+        extract('month', Despesa.data) == mes,
+        extract('year', Despesa.data) == ano
+    ).all()
+    total_despesas = sum(d.valor for d in despesas)
+
+    receita_total = receita_mudancas + receita_guarda
+    lucro = receita_total - total_despesas
+    n = len(recibos)
+
+    return jsonify({
+        "mes": mes, "ano": ano,
+        "receita_mudancas": receita_mudancas,
+        "receita_guarda_moveis": receita_guarda,
+        "receita_total": receita_total,
+        "total_despesas": total_despesas,
+        "lucro_liquido": lucro,
+        "margem_percentual": round(lucro / receita_total * 100, 1) if receita_total > 0 else 0,
+        "mudancas_realizadas": n,
+        "ticket_medio": round(receita_mudancas / n, 2) if n > 0 else 0,
+        "boxes_ocupados": len(boxes_ocu),
+    })
+
+
+@app.route('/api/fechamento/gerar-pdf', methods=['POST'])
+@require_role('admin', 'financeiro')
+def gerar_pdf_fechamento():
+    data = request.json or {}
+    mes = data.get('mes', datetime.utcnow().month)
+    ano = data.get('ano', datetime.utcnow().year)
+    # Gera PDF simples do fechamento
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io, calendar
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4)
+        styles = getSampleStyleSheet()
+        nome_mes = calendar.month_name[mes]
+        story = [
+            Paragraph(f"LEGACY MOVING - FECHAMENTO {nome_mes.upper()} {ano}", styles['Title']),
+        ]
+        doc.build(story)
+        pdf_bytes = buf.getvalue()
+        url = _salvar_drive(pdf_bytes, f"Fechamentos/{ano}", f"Fechamento-{nome_mes}-{ano}.pdf")
+        return jsonify({"drive_url": url, "status": "gerado"})
+    except Exception as e:
+        return err(f"Erro ao gerar PDF: {e}")
+
+
+# ── METAS ─────────────────────────────────────────────────────────────────────
+@app.route('/api/metas', methods=['GET'])
+@jwt_required()
+def listar_metas():
+    return jsonify([{"id": m.id, "titulo": m.titulo, "tipo": m.tipo,
+                     "periodo": m.periodo, "meta": m.meta, "realizado": m.realizado,
+                     "progresso": round(m.realizado / m.meta * 100, 1) if m.meta > 0 else 0,
+                     "created_at": m.created_at.isoformat() if m.created_at else None}
+                    for m in Meta.query.all()])
+
+
+@app.route('/api/metas', methods=['POST'])
+@require_role('admin')
+def criar_meta():
+    data = request.json or {}
+    if not data.get('titulo'):
+        return err("titulo é obrigatório")
+    m = Meta(titulo=data['titulo'], tipo=data.get('tipo', 'receita'),
+             periodo=data.get('periodo', 'mensal'),
+             meta=float(data.get('meta', 0)), realizado=float(data.get('realizado', 0)))
+    db.session.add(m)
+    db.session.commit()
+    return jsonify({"id": m.id, "titulo": m.titulo}), 201
+
+
+@app.route('/api/metas/<int:id>', methods=['PUT'])
+@require_role('admin')
+def atualizar_meta(id):
+    m = Meta.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['titulo', 'tipo', 'periodo']:
+        if f in data:
+            setattr(m, f, data[f])
+    if 'meta' in data:
+        m.meta = float(data['meta'])
+    if 'realizado' in data:
+        m.realizado = float(data['realizado'])
+    db.session.commit()
+    return jsonify({"id": m.id, "titulo": m.titulo})
+
+
+@app.route('/api/metas/<int:id>', methods=['DELETE'])
+@require_role('admin')
+def deletar_meta(id):
+    m = Meta.query.get_or_404(id)
+    db.session.delete(m)
+    db.session.commit()
+    return jsonify({"status": "deletado"})
+
+
+# ── INICIALIZAÇÃO ─────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
