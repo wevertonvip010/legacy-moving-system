@@ -8,6 +8,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { usePermissoes } from '../hooks/usePermissoes';
 import BuscaGlobal from './BuscaGlobal';
+import Notificacoes from './Notificacoes';
 
 const menuGroups = [
   {
@@ -116,7 +117,7 @@ const Sidebar = () => {
             }}>
               {(user.name || user.nome || 'U').charAt(0).toUpperCase()}
             </div>
-            <div style={{ overflow: 'hidden' }}>
+            <div style={{ overflow: 'hidden', flex: 1 }}>
               <div style={{ fontSize: '12px', fontWeight: '600', color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {user.name || user.nome || 'Usuário'}
               </div>
@@ -124,6 +125,7 @@ const Sidebar = () => {
                 {ROLE_LABEL[user.role] || user.role || 'Operador'}
               </div>
             </div>
+            <Notificacoes />
           </div>
         </div>
       )}
