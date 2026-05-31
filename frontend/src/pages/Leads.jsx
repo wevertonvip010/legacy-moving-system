@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { getUserAvatarStyle, getUserInitials } from '../lib/userColors';
+import KanbanLeads from '../components/KanbanLeads';
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -66,6 +67,7 @@ export default function Leads() {
   const [miranteSugestao, setMiranteSugestao] = useState(null);
   const [miranteLoading, setMiranteLoading] = useState(false);
   const [showRelatorio, setShowRelatorio] = useState(false);
+  const [viewMode, setViewMode] = useState('lista'); // 'lista' | 'kanban'
 
   useEffect(() => {
     carregar();
@@ -217,10 +219,24 @@ export default function Leads() {
             taxa {leads.length > 0 ? ((leads.filter(l => l.status === 'convertido').length / leads.length) * 100).toFixed(0) : 0}%
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Toggle Lista / Kanban */}
+          <div style={{ display: 'flex', background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+            {[
+              { key: 'lista', label: '☰ Lista' },
+              { key: 'kanban', label: '▦ Kanban' },
+            ].map(v => (
+              <button key={v.key} onClick={() => setViewMode(v.key)}
+                style={{ padding: '8px 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                  background: viewMode === v.key ? '#0f1f3d' : 'transparent',
+                  color: viewMode === v.key ? 'white' : '#374151' }}>
+                {v.label}
+              </button>
+            ))}
+          </div>
           <button onClick={() => setShowRelatorio(v => !v)}
             style={{ background: showRelatorio ? '#1e3a5f' : 'white', color: showRelatorio ? 'white' : '#374151', border: '1px solid #e5e7eb', borderRadius: 8, padding: '9px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
-            📊 {showRelatorio ? 'Ocultar Relatórios' : 'Ver Relatórios'}
+            📊 {showRelatorio ? 'Ocultar' : 'Relatórios'}
           </button>
           <button onClick={abrirNovo}
             style={{ background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontWeight: 600 }}>
@@ -433,6 +449,22 @@ export default function Leads() {
         );
       })()}
 
+      {/* ── KANBAN VIEW ──────────────────────────────────────────── */}
+      {viewMode === 'kanban' && (
+        <KanbanLeads
+          leads={leads}
+          onMoverStatus={async (lead, novoStatus) => {
+            try {
+              await api.updateLead(lead.id, { status: novoStatus });
+              carregar();
+            } catch (e) { alert(e.message); }
+          }}
+          onClickLead={(lead) => abrirEditar(lead)}
+        />
+      )}
+
+      {/* ── LISTA VIEW ───────────────────────────────────────────── */}
+      {viewMode === 'lista' && <>
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <input placeholder="Buscar por nome..." value={busca} onChange={e => setBusca(e.target.value)}
           style={{ flex: 1, minWidth: 200, padding: '8px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, outline: 'none' }} />
@@ -546,6 +578,8 @@ export default function Leads() {
           </tbody>
         </table>
       </div>
+
+      </>}
 
       {/* Modal Novo / Editar */}
       {modal === 'form' && (

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt } from 'lucide-react';
+import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt, Camera } from 'lucide-react';
 import { api } from '../lib/api';
 import { getUserAvatarStyle, getUserInitials } from '../lib/userColors';
+import VistoriaDigital from '../components/VistoriaDigital';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const fmtDate = (v) => v ? new Date(v).toLocaleDateString('pt-BR') : '—';
@@ -65,6 +66,8 @@ const OrdensServico = () => {
   const [osFinal, setOsFinal] = useState(null);
   const [valorFinal, setValorFinal] = useState('');
   const [materiaisUsados, setMateriaisUsados] = useState('');
+  // Vistoria
+  const [showVistoria, setShowVistoria] = useState(null); // {os, tipo}
   // Etapas
   const [osEtapas, setOsEtapas] = useState(null); // OS selecionada para etapas
   const [etapas, setEtapas] = useState([]);
@@ -313,6 +316,7 @@ const OrdensServico = () => {
                       <button onClick={() => abrirFinalizar(o)} title="Finalizar OS" style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}><CheckCircle size={15} /></button>
                     )}
                     <button onClick={() => abrirEtapas(o)} title="Etapas operacionais" style={{ padding: '5px', background: '#eff6ff', border: 'none', cursor: 'pointer', color: '#2563eb', borderRadius: '4px' }}><Calendar size={14} /></button>
+                    <button onClick={() => setShowVistoria({ os: o, tipo: o.status === 'concluida' || o.status === 'finalizada' ? 'chegada' : 'saida' })} title="Vistoria digital" style={{ padding: '5px', background: '#fdf4ff', border: 'none', cursor: 'pointer', color: '#7c3aed', borderRadius: '4px' }}><Camera size={14} /></button>
                     {(o.status === 'finalizada' || o.status === 'concluida') && (
                       <button onClick={() => navigate('/fechamento-operacional?osId=' + o.id)} title="Fechamento P&L" style={{ padding: '5px', background: '#f0fdf4', border: 'none', cursor: 'pointer', color: '#16a34a', borderRadius: '4px' }}><DollarSign size={14} /></button>
                     )}
@@ -568,6 +572,28 @@ const OrdensServico = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Vistoria Digital */}
+      {showVistoria && (
+        <VistoriaDigital
+          tipo={showVistoria.tipo}
+          onClose={() => setShowVistoria(null)}
+          onSave={async (dados) => {
+            try {
+              const resumo = dados.comodos.map(c =>
+                `[${c.nome}] ${c.itens.map(i => `${i.descricao}: ${i.condicao}${i.observacao ? ` (${i.observacao})` : ''}`).join('; ')}${c.observacoes ? ` | Obs: ${c.observacoes}` : ''}`
+              ).join('\n');
+              const campo = dados.tipo === 'saida' ? 'checklist' : 'observacoes_finais';
+              await api.updateOS(showVistoria.os.id, {
+                [campo]: `VISTORIA DE ${dados.tipo.toUpperCase()} — ${new Date().toLocaleDateString('pt-BR')}\n${resumo}${dados.assinatura ? '\n[Assinatura digital registrada]' : ''}`,
+              });
+              setShowVistoria(null);
+              carregar();
+              alert('Vistoria salva com sucesso!');
+            } catch (e) { alert('Erro: ' + e.message); }
+          }}
+        />
       )}
     </div>
   );
