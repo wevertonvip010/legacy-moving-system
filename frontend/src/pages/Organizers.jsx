@@ -55,6 +55,8 @@ export default function Organizers() {
   const [detalhes, setDetalhes] = useState(null); // organizer selecionada para detalhe
   const [dashboardData, setDashboardData] = useState(null);
   const [loadingDash, setLoadingDash] = useState(false);
+  const [comissoesData, setComissoesData] = useState([]);
+  const [pagandoComissao, setPagandoComissao] = useState(null); // id da comissão sendo paga
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -69,12 +71,34 @@ export default function Organizers() {
 
   const abrirDetalhes = async (o) => {
     setDetalhes(o);
+    setDashboardData(null);
+    setComissoesData([]);
     setLoadingDash(true);
     try {
-      const d = await api.getOrganizerDashboard(o.id);
+      const [d, comissoes] = await Promise.all([
+        api.getOrganizerDashboard(o.id),
+        api.getOrganizerComissoes(o.id),
+      ]);
       setDashboardData(d);
+      setComissoesData(comissoes);
     } catch (e) { setDashboardData(null); }
     finally { setLoadingDash(false); }
+  };
+
+  const handlePagarComissao = async (comissaoId, obs = '') => {
+    setPagandoComissao(comissaoId);
+    try {
+      await api.pagarComissao(comissaoId, { observacoes: obs });
+      // Recarregar comissões e dashboard
+      const [d, comissoes] = await Promise.all([
+        api.getOrganizerDashboard(detalhes.id),
+        api.getOrganizerComissoes(detalhes.id),
+      ]);
+      setDashboardData(d);
+      setComissoesData(comissoes);
+      carregar(); // Atualiza lista principal
+    } catch (e) { alert(e.message); }
+    finally { setPagandoComissao(null); }
   };
 
   const abrirModal = (o = null) => {
@@ -442,7 +466,12 @@ export default function Organizers() {
                   <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                 </div>
               ) : dashboardData ? (
-                <DashboardOrganizer data={dashboardData} />
+                <DashboardOrganizer
+                  data={dashboardData}
+                  comissoes={comissoesData}
+                  onPagar={handlePagarComissao}
+                  pagandoId={pagandoComissao}
+                />
               ) : (
                 <p style={{ color: '#9ca3af', textAlign: 'center' }}>Dados não disponíveis</p>
               )}
@@ -520,9 +549,14 @@ export default function Organizers() {
   );
 }
 
-function DashboardOrganizer({ data }) {
+function DashboardOrganizer({ data, comissoes = [], onPagar, pagandoId }) {
   const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
   const cls = CLASSIFICACAO_CONFIG[data.classificacao] || CLASSIFICACAO_CONFIG.bronze;
+  const [obsModal, setObsModal] = useState(null); // { id, valor }
+  const [obs, setObs] = useState('');
+
+  const pendentes = comissoes.filter(c => c.status === 'pendente');
+  const pagas = comissoes.filter(c => c.status === 'pago');
 
   return (
     <div>
@@ -559,7 +593,7 @@ function DashboardOrganizer({ data }) {
 
       {/* Histórico mensal */}
       {(data.historico_mensal || []).length > 0 && (
-        <div>
+        <div style={{ marginBottom: 24 }}>
           <h4 style={{ fontSize: '13px', fontWeight: '600', color: '#374151', margin: '0 0 12px' }}>Histórico de indicações (12 meses)</h4>
           <ResponsiveContainer width="100%" height={160}>
             <LineChart data={data.historico_mensal}>
@@ -571,6 +605,102 @@ function DashboardOrganizer({ data }) {
               <Line type="monotone" dataKey="convertidos" stroke="#10b981" strokeWidth={2} dot={false} name="Convertidos" />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Comissões */}
+      {comissoes.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h4 style={{ fontSize: '13px', fontWeight: '600', color: '#374151', margin: 0 }}>
+              Comissões
+            </h4>
+            <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
+              {pendentes.length > 0 && (
+                <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                  {pendentes.length} pendente{pendentes.length > 1 ? 's' : ''} · {fmt(pendentes.reduce((s,c)=>s+c.valor,0))}
+                </span>
+              )}
+              {pagas.length > 0 && (
+                <span style={{ color: '#16a34a' }}>
+                  {pagas.length} paga{pagas.length > 1 ? 's' : ''} · {fmt(pagas.reduce((s,c)=>s+c.valor,0))}
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb' }}>
+                  {['OS/Ref.', 'Valor', 'Status', 'Data Pagamento', 'Observação', 'Ação'].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {comissoes.map(c => (
+                  <tr key={c.id} style={{ borderTop: '0.5px solid #f3f4f6' }}>
+                    <td style={{ padding: '8px 12px', fontSize: 12, color: '#6b7280' }}>
+                      {c.os_id ? `OS #${c.os_id}` : c.fechamento_id ? `Fech. #${c.fechamento_id}` : `#${c.id}`}
+                    </td>
+                    <td style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>{fmt(c.valor)}</td>
+                    <td style={{ padding: '8px 12px' }}>
+                      <span style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 600,
+                        background: c.status === 'pago' ? '#dcfce7' : '#fef3c7',
+                        color: c.status === 'pago' ? '#16a34a' : '#d97706',
+                      }}>
+                        {c.status === 'pago' ? '✓ Pago' : '⏳ Pendente'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, color: '#6b7280' }}>
+                      {c.data_pagamento ? new Date(c.data_pagamento).toLocaleDateString('pt-BR') : '—'}
+                    </td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, color: '#6b7280' }}>{c.observacoes || '—'}</td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {c.status !== 'pago' && (
+                        <button
+                          onClick={() => { setObsModal({ id: c.id, valor: c.valor }); setObs(''); }}
+                          disabled={pagandoId === c.id}
+                          style={{ fontSize: 11, padding: '4px 10px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, opacity: pagandoId === c.id ? 0.6 : 1 }}>
+                          {pagandoId === c.id ? 'Pagando...' : 'Pagar'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmação pagamento */}
+      {obsModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 24, width: 380, maxWidth: '90vw' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700 }}>Confirmar Pagamento</h3>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+              Registrar pagamento de comissão no valor de <strong style={{ color: '#15803d' }}>{fmt(obsModal.valor)}</strong>?
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Observações (opcional)</label>
+              <input
+                value={obs}
+                onChange={e => setObs(e.target.value)}
+                placeholder="Ex: Pago via PIX, transferência..."
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setObsModal(null)} style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: 'white' }}>Cancelar</button>
+              <button
+                onClick={() => { const id = obsModal.id; setObsModal(null); onPagar && onPagar(id, obs); }}
+                style={{ padding: '9px 18px', background: '#16a34a', color: 'white', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+                ✓ Confirmar Pagamento
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

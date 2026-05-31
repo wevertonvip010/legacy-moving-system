@@ -5,13 +5,25 @@ import { useAuth } from '../hooks/useAuth';
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
 
+  // Aguarda a validação do token contra o backend antes de decidir
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Verificando autenticação...</p>
-        </div>
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', flexDirection: 'column', gap: '16px',
+        background: '#f8f9fa',
+      }}>
+        <div style={{
+          width: '40px', height: '40px',
+          border: '4px solid #e5e7eb',
+          borderTop: '4px solid #0f1f3d',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>
+          Verificando autenticação...
+        </p>
       </div>
     );
   }
@@ -24,4 +36,3 @@ const ProtectedRoute = ({ children }) => {
 };
 
 export default ProtectedRoute;
-

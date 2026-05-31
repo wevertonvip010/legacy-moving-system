@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
+import { getUserAvatarStyle, getUserInitials } from '../lib/userColors';
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  LineChart, Line,
 } from 'recharts';
 
 const ORIGENS = ['site', 'instagram', 'whatsapp', 'indicacao', 'google_ads', 'b2b', 'organizer'];
@@ -41,13 +44,17 @@ const cls_badge = (c) => {
 
 const EMPTY_FORM = {
   nome: '', telefone: '', email: '', origem: 'instagram', tipo_servico: 'residencial',
-  organizer_id: '', bairro_origem: '', cidade_origem: '', bairro_destino: '', cidade_destino: '', observacoes: ''
+  organizer_id: '', vendedor_id: '',
+  bairro_origem: '', cidade_origem: '', bairro_destino: '', cidade_destino: '', observacoes: ''
 };
 
 export default function Leads() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [leads, setLeads] = useState([]);
   const [organizers, setOrganizers] = useState([]);
+  const [vendedores, setVendedores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
   const [busca, setBusca] = useState('');
@@ -63,6 +70,23 @@ export default function Leads() {
   useEffect(() => {
     carregar();
     api.getOrganizers().then(setOrganizers).catch(() => {});
+    // Carrega vendedores + admins para o campo de responsável
+    Promise.allSettled([
+      api.getUsuariosPorRole('vendedor'),
+      api.getUsuariosPorRole('admin'),
+      api.getUsuariosPorRole('comercial'),
+    ]).then(results => {
+      const all = [];
+      const seen = new Set();
+      results.forEach(r => {
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          r.value.forEach(u => {
+            if (!seen.has(u.id)) { seen.add(u.id); all.push(u); }
+          });
+        }
+      });
+      setVendedores(all);
+    });
   }, [filtro]); // eslint-disable-line
 
   const carregar = async () => {
@@ -77,7 +101,11 @@ export default function Leads() {
   };
 
   const abrirNovo = () => {
-    setForm(EMPTY_FORM);
+    setForm({
+      ...EMPTY_FORM,
+      // Auto-preenche com o vendedor logado (se for vendedor)
+      vendedor_id: (user?.role === 'vendedor' || user?.role === 'comercial') ? String(user.id) : '',
+    });
     setSelecionado(null);
     setModal('form');
   };
@@ -88,6 +116,7 @@ export default function Leads() {
       nome: lead.nome || '', telefone: lead.telefone || '', email: lead.email || '',
       origem: lead.origem || 'instagram', tipo_servico: lead.tipo_servico || 'residencial',
       organizer_id: lead.organizer_id || '',
+      vendedor_id: lead.vendedor_id ? String(lead.vendedor_id) : '',
       bairro_origem: lead.bairro_origem || '', cidade_origem: lead.cidade_origem || '',
       bairro_destino: lead.bairro_destino || '', cidade_destino: lead.cidade_destino || '',
       observacoes: lead.observacoes || ''
@@ -97,6 +126,7 @@ export default function Leads() {
 
   const salvarLead = async () => {
     if (!form.nome || !form.telefone) { alert('Nome e Telefone são obrigatórios'); return; }
+    if (!form.vendedor_id) { alert('Vendedor responsável é obrigatório'); return; }
     setSalvando(true);
     try {
       if (selecionado) {
@@ -118,7 +148,14 @@ export default function Leads() {
     } catch (e) { alert(e.message); }
   };
 
+  const arquivarLead = async (lead) => {
+    if (!window.confirm(`Arquivar lead "${lead.nome}"? Ele ficará oculto da lista principal.`)) return;
+    try { await api.updateLead(lead.id, { status: 'arquivado' }); carregar(); }
+    catch (e) { alert(e.message); }
+  };
+
   const excluirLead = async (lead) => {
+    if (!isAdmin) { alert('Apenas administradores podem excluir leads.'); return; }
     if (!window.confirm(`Excluir lead "${lead.nome}" definitivamente?`)) return;
     try { await api.deleteLead(lead.id); carregar(); }
     catch (e) { alert(e.message); }
@@ -315,6 +352,80 @@ export default function Leads() {
                       </ResponsiveContainer>
                     </div>
                   )}
+
+                  {/* Conversão por Vendedor */}
+                  {(() => {
+                    const vendMap = {};
+                    leads.forEach(l => {
+                      const vid = l.vendedor_id;
+                      if (!vid) return;
+                      const nome = (l.vendedor_nome || 'Vendedor').split(' ')[0];
+                      if (!vendMap[vid]) vendMap[vid] = { nome, total: 0, conv: 0, perdido: 0 };
+                      vendMap[vid].total++;
+                      if (l.status === 'convertido') vendMap[vid].conv++;
+                      if (l.status === 'perdido') vendMap[vid].perdido++;
+                    });
+                    const convVendedor = Object.values(vendMap)
+                      .map(d => ({ name: d.nome, taxa: d.total > 0 ? +((d.conv/d.total)*100).toFixed(1) : 0, total: d.total, conv: d.conv, perdido: d.perdido }))
+                      .sort((a,b) => b.taxa - a.taxa);
+                    if (convVendedor.length === 0) return null;
+                    return (
+                      <div style={{ background: 'white', borderRadius: 12, padding: 20, border: '0.5px solid #e5e7eb' }}>
+                        <h3 style={{ margin: '0 0 16px', fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>Conversão por Vendedor</h3>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={convVendedor} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} domain={[0, 100]} />
+                            <Tooltip formatter={(v, n, p) => [`${v}% (${p.payload.conv}/${p.payload.total})`, 'Conversão']} />
+                            <Bar dataKey="taxa" name="Taxa Conv." fill="#0891b2" radius={[4,4,0,0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Evolução Mensal (últimos 6 meses com dados) */}
+                  {(() => {
+                    const now = new Date();
+                    const meses = [];
+                    for (let i = 5; i >= 0; i--) {
+                      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                      const m = d.getMonth() + 1;
+                      const a = d.getFullYear();
+                      const label = `${['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m-1]}/${String(a).slice(2)}`;
+                      const mLeads = leads.filter(l => {
+                        if (!l.created_at) return false;
+                        const ld = new Date(l.created_at);
+                        return ld.getMonth() + 1 === m && ld.getFullYear() === a;
+                      });
+                      meses.push({
+                        label,
+                        total: mLeads.length,
+                        convertidos: mLeads.filter(l => l.status === 'convertido').length,
+                        perdidos: mLeads.filter(l => l.status === 'perdido').length,
+                      });
+                    }
+                    const temDados = meses.some(m => m.total > 0);
+                    if (!temDados) return null;
+                    return (
+                      <div style={{ background: 'white', borderRadius: 12, padding: 20, border: '0.5px solid #e5e7eb', gridColumn: '1 / -1' }}>
+                        <h3 style={{ margin: '0 0 16px', fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>Evolução Mensal de Leads (últimos 6 meses)</h3>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <LineChart data={meses} margin={{ top: 0, right: 20, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} />
+                            <Tooltip />
+                            <Legend wrapperStyle={{ fontSize: 11 }} />
+                            <Line type="monotone" dataKey="total" name="Total" stroke="#6b7280" strokeWidth={2} dot={{ r: 3 }} />
+                            <Line type="monotone" dataKey="convertidos" name="Convertidos" stroke="#16a34a" strokeWidth={2} dot={{ r: 3 }} />
+                            <Line type="monotone" dataKey="perdidos" name="Perdidos" stroke="#dc2626" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -332,6 +443,7 @@ export default function Leads() {
           <option value="classificado">Classificado</option>
           <option value="convertido">Convertido</option>
           <option value="perdido">Perdido</option>
+          <option value="arquivado">Arquivados</option>
         </select>
       </div>
 
@@ -342,7 +454,7 @@ export default function Leads() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-              {['Nome', 'Telefone', 'Origem', 'Tipo', 'Cidade', 'Classificação', 'Status', 'Ações'].map(h => (
+              {['Nome', 'Telefone', 'Origem', 'Tipo', 'Cidade', 'Resp.', 'Classificação', 'Status', 'Ações'].map(h => (
                 <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
               ))}
             </tr>
@@ -362,6 +474,18 @@ export default function Leads() {
                 </td>
                 <td style={{ padding: '11px 14px', fontSize: 13 }}>{l.tipo_servico}</td>
                 <td style={{ padding: '11px 14px', fontSize: 13, color: '#6b7280' }}>{l.cidade_origem || '–'}</td>
+                <td style={{ padding: '11px 14px' }}>
+                  {l.vendedor_id ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={getUserAvatarStyle(l.vendedor_id, 26)} title={l.vendedor_nome || ''}>
+                        {getUserInitials(l.vendedor_nome || '?')}
+                      </div>
+                      <span style={{ fontSize: 11, color: '#6b7280', maxWidth: 70, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {(l.vendedor_nome || '').split(' ')[0]}
+                      </span>
+                    </div>
+                  ) : <span style={{ fontSize: 11, color: '#d1d5db' }}>—</span>}
+                </td>
                 <td style={{ padding: '11px 14px' }}>{cls_badge(l.classificacao)}</td>
                 <td style={{ padding: '11px 14px' }}>{badge(l.status)}</td>
                 <td style={{ padding: '11px 14px' }}>
@@ -393,16 +517,31 @@ export default function Leads() {
                         Perdido
                       </button>
                     )}
-                    <button onClick={() => excluirLead(l)} title="Excluir"
-                      style={{ padding: '4px 7px', background: 'none', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
-                      ✕
-                    </button>
+                    {(l.status === 'perdido' || l.status === 'novo') && (
+                      <button onClick={() => arquivarLead(l)} title="Arquivar lead"
+                        style={{ padding: '4px 9px', background: '#f3f4f6', color: '#6b7280', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
+                        Arquivar
+                      </button>
+                    )}
+                    {l.status === 'arquivado' && (
+                      <button onClick={() => { api.updateLead(l.id, { status: 'novo' }).then(carregar).catch(e => alert(e.message)); }}
+                        title="Reativar lead"
+                        style={{ padding: '4px 9px', background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                        ↺ Reativar
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button onClick={() => excluirLead(l)} title="Excluir (apenas Admin)"
+                        style={{ padding: '4px 7px', background: 'none', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
+                        ✕
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
             ))}
             {filtrados.length === 0 && !loading && (
-              <tr><td colSpan={8} style={{ padding: 32, textAlign: 'center', color: '#9ca3af' }}>Nenhum lead encontrado</td></tr>
+              <tr><td colSpan={9} style={{ padding: 32, textAlign: 'center', color: '#9ca3af' }}>Nenhum lead encontrado</td></tr>
             )}
           </tbody>
         </table>
@@ -448,6 +587,29 @@ export default function Leads() {
               </div>
             </div>
 
+            {/* Vendedor responsável (obrigatório) */}
+            <div style={{ marginBottom: 14, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: 12 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8', display: 'block', marginBottom: 6 }}>
+                👤 Vendedor Responsável *
+              </label>
+              <select
+                value={form.vendedor_id || ''}
+                onChange={e => setForm(f => ({ ...f, vendedor_id: e.target.value }))}
+                style={{ ...inp, border: '1px solid #93c5fd', background: 'white' }}
+              >
+                <option value="">Selecione o vendedor...</option>
+                {/* Admin também aparece como opção */}
+                {vendedores.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name || v.nome}{v.role === 'admin' ? ' (Admin)' : ''}
+                  </option>
+                ))}
+              </select>
+              {!form.vendedor_id && (
+                <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#dc2626' }}>* Campo obrigatório para análise de performance</p>
+              )}
+            </div>
+
             {form.origem === 'organizer' && (
               <div style={{ marginBottom: 14, background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: 8, padding: 12 }}>
                 <label style={{ fontSize: 13, fontWeight: 600, color: '#7c3aed', display: 'block', marginBottom: 6 }}>
@@ -477,8 +639,8 @@ export default function Leads() {
                 style={{ padding: '10px 20px', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer', background: '#fff' }}>
                 Cancelar
               </button>
-              <button onClick={salvarLead} disabled={salvando || !form.nome || !form.telefone}
-                style={{ padding: '10px 20px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, opacity: (!form.nome || !form.telefone) ? 0.5 : 1 }}>
+              <button onClick={salvarLead} disabled={salvando || !form.nome || !form.telefone || !form.vendedor_id}
+                style={{ padding: '10px 20px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, opacity: (!form.nome || !form.telefone || !form.vendedor_id) ? 0.5 : 1 }}>
                 {salvando ? 'Salvando...' : 'Salvar'}
               </button>
             </div>

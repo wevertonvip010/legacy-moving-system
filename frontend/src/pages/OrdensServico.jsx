@@ -1,13 +1,51 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign } from 'lucide-react';
+import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt } from 'lucide-react';
 import { api } from '../lib/api';
+import { getUserAvatarStyle, getUserInitials } from '../lib/userColors';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const fmtDate = (v) => v ? new Date(v).toLocaleDateString('pt-BR') : '—';
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' };
-const EMPTY = { cliente: '', endereco_origem: '', endereco_destino: '', data_mudanca: '', equipe: '', veiculo: '', valor_total: '', observacoes: '' };
-const STATUS_COLOR = { agendada: '#f59e0b', em_andamento: '#2563eb', concluida: '#16a34a', cancelada: '#6b7280' };
-const STATUS_LABEL = { agendada: 'Agendada', em_andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
+const EMPTY = { cliente: '', endereco_origem: '', endereco_destino: '', data_mudanca: '', equipe: '', veiculo: '', valor_total: '', observacoes: '', materiais_previstos: '', motorista: '' };
+const STATUS_COLOR = {
+  aberta: '#9ca3af', agendada: '#f59e0b', em_andamento: '#2563eb',
+  finalizada: '#16a34a', concluida: '#16a34a', cancelada: '#6b7280', alterada: '#f97316',
+};
+const STATUS_LABEL = {
+  aberta: 'Aberta', agendada: 'Agendada', em_andamento: 'Em andamento',
+  finalizada: 'Finalizada', concluida: 'Concluída', cancelada: 'Cancelada', alterada: 'Alterada',
+};
+const STATUS_NEXT = {
+  aberta: ['agendada', 'cancelada'],
+  agendada: ['em_andamento', 'alterada', 'cancelada'],
+  em_andamento: ['concluida', 'cancelada'],
+  finalizada: ['alterada'],
+  concluida: ['alterada'],
+  alterada: ['agendada', 'cancelada'],
+  cancelada: ['aberta'],
+};
+
+// Monta mensagem WhatsApp para a OS
+const montarMsgWhatsApp = (os) => {
+  const data = os.data_mudanca ? fmtDate(os.data_mudanca) : '—';
+  const msg = [
+    `🚛 *LEGACY MOVING — OS ${os.numero || os.id}*`,
+    ``,
+    `👤 *Cliente:* ${os.cliente || '—'}`,
+    `📅 *Data:* ${data}`,
+    `📍 *Origem:* ${os.endereco_origem || '—'}`,
+    `📍 *Destino:* ${os.endereco_destino || '—'}`,
+    ``,
+    `👷 *Equipe:* ${os.equipe || '—'}`,
+    `🚚 *Caminhão:* ${os.veiculo || '—'}`,
+    ``,
+    os.observacoes_operacionais || os.observacoes ? `📋 *Obs:* ${os.observacoes_operacionais || os.observacoes}` : null,
+    ``,
+    `✅ Legacy Moving ERP`,
+  ].filter(l => l !== null).join('\n');
+  return encodeURIComponent(msg);
+};
 const TIPO_ETAPA = { embalagem: '📦 Embalagem', transporte: '🚛 Transporte', finalizacao: '✅ Finalização', outro: '📋 Outro' };
 const EMPTY_ETAPA = { data: '', tipo: 'transporte', quantidade_ajudantes: '', quantidade_caminhoes: '', equipe: '', observacoes: '' };
 
@@ -26,6 +64,7 @@ const OrdensServico = () => {
   const [showFinalModal, setShowFinalModal] = useState(false);
   const [osFinal, setOsFinal] = useState(null);
   const [valorFinal, setValorFinal] = useState('');
+  const [materiaisUsados, setMateriaisUsados] = useState('');
   // Etapas
   const [osEtapas, setOsEtapas] = useState(null); // OS selecionada para etapas
   const [etapas, setEtapas] = useState([]);
@@ -52,8 +91,10 @@ const OrdensServico = () => {
     setForm(o ? {
       cliente: o.cliente, endereco_origem: o.endereco_origem || '', endereco_destino: o.endereco_destino || '',
       data_mudanca: o.data_mudanca ? o.data_mudanca.slice(0, 16) : '',
-      equipe: o.equipe || '', veiculo: o.veiculo || '', valor_total: o.valor_total || '',
-      observacoes: o.observacoes_operacionais || o.observacoes || ''
+      equipe: o.equipe || '', veiculo: o.veiculo || '', motorista: o.motorista || '',
+      valor_total: o.valor_total || '',
+      observacoes: o.observacoes_operacionais || o.observacoes || '',
+      materiais_previstos: o.materiais_previstos || '',
     } : EMPTY);
     setErroForm('');
     setShowModal(true);
@@ -68,6 +109,8 @@ const OrdensServico = () => {
         valor_total: parseFloat(form.valor_total) || 0,
         data_mudanca: form.data_mudanca ? form.data_mudanca + ':00' : null,
         observacoes_operacionais: form.observacoes,
+        materiais_previstos: form.materiais_previstos,
+        motorista: form.motorista,
       };
       if (editando) await api.updateOS(editando.id, payload);
       else await api.createOS(payload);
@@ -82,16 +125,32 @@ const OrdensServico = () => {
     catch (e) { alert(e.message); }
   };
 
+  const mudarStatus = async (os, novoStatus) => {
+    try {
+      await api.updateOS(os.id, { status: novoStatus });
+      carregar();
+    } catch (e) { alert('Erro ao atualizar status: ' + e.message); }
+  };
+
+  const enviarWhatsApp = (os) => {
+    const msg = montarMsgWhatsApp(os);
+    window.open(`https://wa.me/?text=${msg}`, '_blank');
+  };
+
   const abrirFinalizar = (os) => {
     setOsFinal(os);
     setValorFinal(String(os.valor_total || ''));
+    setMateriaisUsados(os.materiais_previstos || '');
     setShowFinalModal(true);
   };
 
   const concluir = async () => {
     setSalvando(true);
     try {
-      await api.concluirOS(osFinal.id, { valor_total: parseFloat(valorFinal) || 0 });
+      await api.concluirOS(osFinal.id, {
+        valor_total: parseFloat(valorFinal) || 0,
+        ...(materiaisUsados.trim() ? { materiais_usados: materiaisUsados } : {}),
+      });
       setShowFinalModal(false);
       carregar();
       // Perguntar sobre avaria
@@ -199,14 +258,14 @@ const OrdensServico = () => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f9fafb' }}>
-              {['Número', 'Cliente', 'Data', 'Equipe', 'Veículo', 'Valor', 'Status', 'Ações'].map(h => (
+              {['Número', 'Cliente', 'Data', 'Equipe', 'Veículo', 'Valor', 'Resp.', 'Status', 'Ações'].map(h => (
                 <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtrados.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Nenhuma OS encontrada</td></tr>
+              <tr><td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Nenhuma OS encontrada</td></tr>
             ) : filtrados.map(o => (
               <tr key={o.id} style={{ borderTop: '0.5px solid #f3f4f6' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
@@ -220,21 +279,45 @@ const OrdensServico = () => {
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.veiculo || '—'}</td>
                 <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{fmt(o.valor_total)}</td>
                 <td style={{ padding: '12px 16px' }}>
+                  {o.vendedor_id ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} title={o.vendedor_nome || ''}>
+                      <div style={getUserAvatarStyle(o.vendedor_id, 26)}>
+                        {getUserInitials(o.vendedor_nome || '?')}
+                      </div>
+                    </div>
+                  ) : <span style={{ fontSize: 11, color: '#d1d5db' }}>—</span>}
+                </td>
+                <td style={{ padding: '12px 16px' }}>
                   <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '20px', fontWeight: '500', background: (STATUS_COLOR[o.status] || '#6b7280') + '20', color: STATUS_COLOR[o.status] || '#6b7280' }}>
                     {STATUS_LABEL[o.status] || o.status}
                   </span>
                 </td>
                 <td style={{ padding: '12px 16px' }}>
-                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    {o.status === 'agendada' && (
-                      <button onClick={() => iniciar(o.id)} title="Iniciar OS" style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb' }}><PlayCircle size={15} /></button>
-                    )}
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* Status dropdown */}
+                    <select
+                      value={o.status || 'aberta'}
+                      onChange={e => mudarStatus(o, e.target.value)}
+                      style={{ padding: '3px 6px', border: `1px solid ${STATUS_COLOR[o.status] || '#e5e7eb'}`, borderRadius: '6px', fontSize: '11px', color: STATUS_COLOR[o.status] || '#6b7280', background: '#fff', cursor: 'pointer', fontWeight: '600' }}
+                      title="Alterar status"
+                    >
+                      {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                        <option key={k} value={k}>{v}</option>
+                      ))}
+                    </select>
+                    {/* WhatsApp */}
+                    <button onClick={() => enviarWhatsApp(o)} title="Enviar via WhatsApp" style={{ padding: '5px', background: '#dcfce7', border: 'none', cursor: 'pointer', color: '#16a34a', borderRadius: '4px' }}>
+                      <MessageCircle size={14} />
+                    </button>
                     {o.status === 'em_andamento' && (
-                      <button onClick={() => abrirFinalizar(o)} title="Concluir OS" style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}><CheckCircle size={15} /></button>
+                      <button onClick={() => abrirFinalizar(o)} title="Finalizar OS" style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}><CheckCircle size={15} /></button>
                     )}
                     <button onClick={() => abrirEtapas(o)} title="Etapas operacionais" style={{ padding: '5px', background: '#eff6ff', border: 'none', cursor: 'pointer', color: '#2563eb', borderRadius: '4px' }}><Calendar size={14} /></button>
-                    {o.status === 'concluida' && (
+                    {(o.status === 'finalizada' || o.status === 'concluida') && (
                       <button onClick={() => navigate('/fechamento-operacional?osId=' + o.id)} title="Fechamento P&L" style={{ padding: '5px', background: '#f0fdf4', border: 'none', cursor: 'pointer', color: '#16a34a', borderRadius: '4px' }}><DollarSign size={14} /></button>
+                    )}
+                    {(o.status === 'finalizada' || o.status === 'concluida') && (
+                      <button onClick={() => navigate(`/recibos?os_id=${o.id}`)} title="Gerar recibo para esta OS" style={{ padding: '5px', background: '#eff6ff', border: 'none', cursor: 'pointer', color: '#2563eb', borderRadius: '4px' }}><Receipt size={14} /></button>
                     )}
                     <button onClick={() => abrir(o)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }} title="Editar OS"><Edit size={15} /></button>
                     <button onClick={() => deletar(o.id)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={15} /></button>
@@ -253,18 +336,42 @@ const OrdensServico = () => {
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>{editando ? 'Editar OS' : 'Nova Ordem de Serviço'}</h3>
               <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={18} /></button>
             </div>
-            {[['Cliente *', 'cliente', 'text', 'Nome do cliente'], ['Endereço Origem', 'endereco_origem', 'text', 'Ex: Rua A, 100'], ['Endereço Destino', 'endereco_destino', 'text', 'Ex: Rua B, 200'], ['Equipe', 'equipe', 'text', 'Ex: João, Pedro, Maria'], ['Veículo', 'veiculo', 'text', 'Ex: Caminhão, Caminhonete'], ['Valor (R$)', 'valor_total', 'number', '0.00']].map(([label, key, type, ph]) => (
+            {[['Cliente *', 'cliente', 'text', 'Nome do cliente'], ['Endereço Origem', 'endereco_origem', 'text', 'Ex: Rua A, 100'], ['Endereço Destino', 'endereco_destino', 'text', 'Ex: Rua B, 200']].map(([label, key, type, ph]) => (
               <div key={key} style={{ marginBottom: '12px' }}>
                 <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>{label}</label>
                 <input type={type} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} placeholder={ph} style={inputStyle} />
               </div>
             ))}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Equipe</label>
+                <input value={form.equipe} onChange={e => setForm({ ...form, equipe: e.target.value })} placeholder="Ex: João, Pedro, Maria" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Motorista</label>
+                <input value={form.motorista} onChange={e => setForm({ ...form, motorista: e.target.value })} placeholder="Nome do motorista" style={inputStyle} />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Veículo</label>
+                <input value={form.veiculo} onChange={e => setForm({ ...form, veiculo: e.target.value })} placeholder="Ex: Caminhão, Caminhonete" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Valor (R$)</label>
+                <input type="number" value={form.valor_total} onChange={e => setForm({ ...form, valor_total: e.target.value })} placeholder="0.00" style={inputStyle} />
+              </div>
+            </div>
             <div style={{ marginBottom: '12px' }}>
               <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data/hora da mudança</label>
               <input type="datetime-local" value={form.data_mudanca} onChange={e => setForm({ ...form, data_mudanca: e.target.value })} style={inputStyle} />
             </div>
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Observações</label>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Materiais Previstos <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>(lista de itens a utilizar)</span></label>
+              <textarea value={form.materiais_previstos} onChange={e => setForm({ ...form, materiais_previstos: e.target.value })} rows={2} placeholder="Ex: 50 caixas de papelão, fita adesiva, papel bolha..." style={{ ...inputStyle, resize: 'vertical' }} />
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Observações Operacionais</label>
               <textarea value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
             </div>
             {erroForm && <p style={{ color: '#dc2626', fontSize: '13px' }}>{erroForm}</p>}
@@ -280,15 +387,30 @@ const OrdensServico = () => {
 
       {showFinalModal && osFinal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '380px', maxWidth: '90vw' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: '600' }}>Concluir OS</h3>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '460px', maxWidth: '90vw' }}>
+            <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: '600' }}>Concluir OS</h3>
             <p style={{ fontSize: '13px', color: '#374151', marginBottom: '16px' }}>OS: <strong>{osFinal.numero}</strong> — {osFinal.cliente}</p>
-            <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Valor final (R$)</label>
-            <input type="number" value={valorFinal} onChange={e => setValorFinal(e.target.value)} style={inputStyle} />
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Valor final (R$)</label>
+              <input type="number" value={valorFinal} onChange={e => setValorFinal(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>
+                Materiais utilizados <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>— será descontado do estoque</span>
+              </label>
+              <textarea
+                value={materiaisUsados}
+                onChange={e => setMateriaisUsados(e.target.value)}
+                rows={3}
+                placeholder="Ex: 50 caixas de papelão, 2 rolos de fita adesiva, papel bolha..."
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 0 0' }}>ℹ️ O sistema tentará descontar automaticamente do estoque os itens listados.</p>
+            </div>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
               <button onClick={() => setShowFinalModal(false)} style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', background: 'white' }}>Cancelar</button>
               <button onClick={concluir} disabled={salvando} style={{ padding: '9px 18px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
-                {salvando ? 'Concluindo...' : 'Concluir'}
+                {salvando ? 'Concluindo...' : '✓ Concluir OS'}
               </button>
             </div>
           </div>

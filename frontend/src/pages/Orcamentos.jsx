@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { Share2 } from 'lucide-react';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -21,6 +22,7 @@ const S = {
 
 const EMPTY_FORM = {
   cliente: '', cliente_id: null, lead_id: null,
+  telefone: '', email: '',
   tipo_servico: 'residencial',
   data_prevista: '',
   orig_rua: '', orig_numero: '', orig_complemento: '', orig_bairro: '',
@@ -61,6 +63,10 @@ export default function Orcamentos() {
   const [orcAtual, setOrcAtual] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [erroForm, setErroForm] = useState('');
+  // Auto-fill
+  const [leads, setLeads]         = useState([]);
+  const [clientes, setClientes]   = useState([]);
+  const [buscaLead, setBuscaLead] = useState('');
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -74,6 +80,44 @@ export default function Orcamentos() {
   }, [filtro]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Carrega leads e clientes para auto-fill
+  useEffect(() => {
+    api.getLeads({ limit: 200 }).then(d => setLeads(Array.isArray(d) ? d : (d?.items || []))).catch(() => {});
+    api.getClientes({ limit: 200 }).then(d => setClientes(Array.isArray(d) ? d : (d?.items || []))).catch(() => {});
+  }, []);
+
+  const preencherLead = (lead) => {
+    if (!lead) return;
+    setForm(f => ({
+      ...f,
+      cliente: lead.nome || f.cliente,
+      cliente_id: lead.cliente_id || f.cliente_id,
+      lead_id: lead.id,
+      telefone: lead.telefone || f.telefone || '',
+      email: lead.email || f.email || '',
+      orig_rua: lead.endereco_origem || f.orig_rua || '',
+      orig_cidade: lead.cidade_origem || f.orig_cidade || '',
+      dest_rua: lead.endereco_destino || f.dest_rua || '',
+      dest_cidade: lead.cidade_destino || f.dest_cidade || '',
+      tipo_servico: lead.tipo_servico || f.tipo_servico || 'residencial',
+    }));
+    setBuscaLead('');
+  };
+
+  const preencherCliente = (cli) => {
+    if (!cli) return;
+    setForm(f => ({
+      ...f,
+      cliente: cli.nome || f.cliente,
+      cliente_id: cli.id,
+      telefone: cli.telefone || f.telefone || '',
+      email: cli.email || f.email || '',
+      orig_rua: cli.endereco || f.orig_rua || '',
+      orig_cidade: cli.cidade || f.orig_cidade || '',
+    }));
+    setBuscaLead('');
+  };
 
   // Abre formulário de edição para orçamento recém-criado (vindo de lead convertido)
   useEffect(() => {
@@ -170,6 +214,40 @@ export default function Orcamentos() {
     setModal(tipo); // 'rejeitar' | 'cancelar'
   };
 
+  const enviarWhatsApp = (o) => {
+    const fmtAddr = (rua, num, bairro, cidade, estado) =>
+      [rua, num, bairro, cidade, estado].filter(Boolean).join(', ');
+    const origem  = fmtAddr(o.orig_rua, o.orig_numero, o.orig_bairro, o.orig_cidade, o.orig_estado);
+    const destino = fmtAddr(o.dest_rua, o.dest_numero, o.dest_bairro, o.dest_cidade, o.dest_estado);
+    const total   = fmt((o.valor_servico || 0) + (o.valor_seguro || 0));
+    const msg = [
+      `💼 *ORÇAMENTO ${o.numero} — LEGACY MOVING*`,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      ``,
+      `Prezado(a) *${o.cliente}*,`,
+      ``,
+      `Segue o orçamento elaborado para o seu serviço:`,
+      ``,
+      `🏠 *Tipo:* ${o.tipo_servico || 'Residencial'}`,
+      origem  ? `📍 *Origem:* ${origem}` : '',
+      destino ? `📍 *Destino:* ${destino}` : '',
+      o.data_prevista ? `📅 *Data Prevista:* ${new Date(o.data_prevista).toLocaleDateString('pt-BR')}` : '',
+      ``,
+      `💰 *Valor do Serviço:* ${fmt(o.valor_servico || 0)}`,
+      (o.valor_seguro > 0) ? `🛡️ *Seguro:* ${fmt(o.valor_seguro)}` : '',
+      `✅ *Total:* ${total}`,
+      o.condicoes_pagamento ? `\n💳 *Pagamento:* ${o.condicoes_pagamento}` : '',
+      o.observacoes_comerciais ? `\n📌 *Obs:* ${o.observacoes_comerciais}` : '',
+      ``,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      `Para confirmar ou tirar dúvidas, responda esta mensagem.`,
+      ``,
+      `Atenciosamente,`,
+      `*Legacy Moving*`,
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   const filtrados = lista.filter(o => {
     const matchStatus = !filtro || o.status === filtro;
     const matchBusca  = !busca  || o.cliente.toLowerCase().includes(busca.toLowerCase())
@@ -251,6 +329,10 @@ export default function Orcamentos() {
                             ✎ Editar
                           </button>
                         )}
+                        <button onClick={() => enviarWhatsApp(o)} title="Enviar orçamento via WhatsApp"
+                          style={{ padding: '4px 8px', background: '#dcfce7', color: '#15803d', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <Share2 size={11} /> WA
+                        </button>
                         {o.status === 'aprovado' && (
                           <button onClick={() => navigate(`/cadastro-complementar?orcamento_id=${o.id}`)}
                             style={{ padding: '4px 10px', background: '#ede9fe', color: '#6d28d9', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
@@ -284,6 +366,42 @@ export default function Orcamentos() {
               <button onClick={() => setModal(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#9ca3af' }}>×</button>
             </div>
 
+            {/* Auto-fill por lead ou cliente */}
+            {!editando && (
+              <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+                <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 700, color: '#1d4ed8' }}>⚡ Preencher automaticamente a partir de:</p>
+                <input
+                  value={buscaLead}
+                  onChange={e => setBuscaLead(e.target.value)}
+                  placeholder="Digite nome do lead ou cliente para buscar..."
+                  style={{ ...S.input, background: 'white' }}
+                />
+                {buscaLead.length >= 2 && (
+                  <div style={{ background: 'white', border: '1px solid #bfdbfe', borderRadius: 8, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
+                    {[
+                      ...leads.filter(l => l.nome?.toLowerCase().includes(buscaLead.toLowerCase())).slice(0, 5).map(l => ({ ...l, _tipo: 'lead' })),
+                      ...clientes.filter(c => c.nome?.toLowerCase().includes(buscaLead.toLowerCase())).slice(0, 5).map(c => ({ ...c, _tipo: 'cliente' })),
+                    ].map((item, i) => (
+                      <button key={i} onClick={() => item._tipo === 'lead' ? preencherLead(item) : preencherCliente(item)}
+                        style={{ width: '100%', textAlign: 'left', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid #f3f4f6' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 20, background: item._tipo === 'lead' ? '#dbeafe' : '#dcfce7', color: item._tipo === 'lead' ? '#1d4ed8' : '#15803d', fontWeight: 700 }}>
+                          {item._tipo === 'lead' ? 'LEAD' : 'CLIENTE'}
+                        </span>
+                        <span style={{ fontWeight: 600 }}>{item.nome}</span>
+                        {item.telefone && <span style={{ color: '#9ca3af', fontSize: 11 }}>{item.telefone}</span>}
+                      </button>
+                    ))}
+                    {leads.filter(l => l.nome?.toLowerCase().includes(buscaLead.toLowerCase())).length === 0 &&
+                     clientes.filter(c => c.nome?.toLowerCase().includes(buscaLead.toLowerCase())).length === 0 && (
+                      <div style={{ padding: '10px 12px', fontSize: 13, color: '#9ca3af' }}>Nenhum resultado</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Cliente + Tipo + Data */}
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
               <Field label="Cliente *">
@@ -299,6 +417,16 @@ export default function Orcamentos() {
               </Field>
               <Field label="Data Prevista">
                 <input type="date" value={form.data_prevista} onChange={e => setForm(f => ({ ...f, data_prevista: e.target.value }))} style={S.input} />
+              </Field>
+            </div>
+
+            {/* Telefone + Email */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <Field label="Telefone do Cliente">
+                <input value={form.telefone || ''} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} placeholder="(11) 99999-9999" style={S.input} />
+              </Field>
+              <Field label="E-mail do Cliente">
+                <input value={form.email || ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@exemplo.com" style={S.input} />
               </Field>
             </div>
 

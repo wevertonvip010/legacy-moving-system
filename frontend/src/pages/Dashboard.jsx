@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Truck, Archive, Users, DollarSign, TrendingUp, Heart, Calendar, AlertCircle, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { Truck, Archive, Users, DollarSign, TrendingUp, Heart, Calendar, AlertCircle, ChevronLeft, ChevronRight, ExternalLink, AlertTriangle, Trophy, Star, Package } from 'lucide-react';
 import { api } from '../lib/api';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -16,17 +16,29 @@ const Dashboard = () => {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [osList, setOsList] = useState([]);
   const [progList, setProgList] = useState([]);
+  const [avarias, setAvarias] = useState([]);
+  const [rankingVendedores, setRankingVendedores] = useState([]);
 
   useEffect(() => {
     Promise.allSettled([
       api.dashboard(),
       api.getOS({ limit: 200 }),
       api.getProgramacao({ limit: 200 }),
-    ]).then(([dash, os, prog]) => {
+      api.getAvarias ? api.getAvarias({ limit: 100 }) : Promise.resolve([]),
+      api.getUsuarios ? api.getUsuarios({ role: 'vendedor' }) : Promise.resolve([]),
+    ]).then(([dash, os, prog, av, users]) => {
       if (dash.status === 'fulfilled') setDados(dash.value);
       else setError(dash.reason?.message || 'Erro ao carregar');
       if (os.status === 'fulfilled') setOsList(Array.isArray(os.value) ? os.value : (os.value?.items || []));
       if (prog.status === 'fulfilled') setProgList(Array.isArray(prog.value) ? prog.value : (prog.value?.items || []));
+      if (av.status === 'fulfilled') {
+        const lista = Array.isArray(av.value) ? av.value : (av.value?.items || []);
+        setAvarias(lista);
+      }
+      if (users.status === 'fulfilled') {
+        const lista = Array.isArray(users.value) ? users.value : (users.value?.items || []);
+        setRankingVendedores(lista);
+      }
     }).finally(() => setLoading(false));
   }, []);
 
@@ -57,11 +69,13 @@ const Dashboard = () => {
 
   const metricas = [
     { label: 'Mudanças este mês', value: d.mudancas_mes ?? 0, sub: 'Ordens de serviço', icon: Truck, color: '#3b82f6', path: '/ordens-servico' },
-    { label: 'Boxes ocupados', value: `${d.boxes_ocupados ?? 0}/${d.boxes_total ?? 20}`, sub: `${pct}% de ocupação`, icon: Archive, color: '#f97316', path: '/guarda-moveis' },
-    { label: 'Clientes ativos', value: d.clientes_ativos ?? 0, sub: 'Na carteira', icon: Users, color: '#8b5cf6', path: '/clientes' },
-    { label: 'Receita recorrente', value: fmt(d.receita_recorrente), sub: 'Guarda-móveis/mês', icon: DollarSign, color: '#10b981', path: '/financeiro' },
     { label: 'Leads novos', value: d.leads_novos ?? 0, sub: 'Aguardando contato', icon: Heart, color: '#ec4899', path: '/leads' },
     { label: 'Orçamentos abertos', value: d.orcamentos_abertos ?? 0, sub: 'Rascunho + enviado', icon: TrendingUp, color: '#f59e0b', path: '/orcamentos' },
+    { label: 'Clientes ativos', value: d.clientes_ativos ?? 0, sub: 'Na carteira', icon: Users, color: '#8b5cf6', path: '/clientes' },
+    { label: 'Boxes ocupados', value: `${d.boxes_ocupados ?? 0}/${d.boxes_total ?? 20}`, sub: `${pct}% de ocupação`, icon: Archive, color: '#f97316', path: '/guarda-moveis' },
+    { label: 'Avarias abertas', value: avarias.filter(a => a.status === 'aberta').length, sub: 'Requerem atenção', icon: AlertTriangle, color: '#ef4444', path: '/avarias' },
+    { label: 'Alertas de Estoque', value: d.estoque_alertas ?? 0, sub: d.estoque_alertas ? '⚠ Itens abaixo do mínimo' : 'Estoque saudável', icon: Package, color: (d.estoque_alertas ?? 0) > 0 ? '#dc2626' : '#16a34a', path: '/estoque' },
+    { label: 'Receita Recorrente', value: fmt(d.receita_recorrente ?? 0), sub: 'Guarda-móveis/mês', icon: DollarSign, color: '#0891b2', path: '/financeiro' },
   ];
 
   // ── Calendário embutido ──────────────────────────────────────────────────────
@@ -121,7 +135,7 @@ const Dashboard = () => {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '14px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '24px' }}>
         {metricas.map((m, i) => (
           <div key={i} onClick={() => navigate(m.path)}
             style={{ background: 'white', borderRadius: '12px', padding: '16px', border: '0.5px solid #e5e7eb', cursor: 'pointer', transition: 'all 0.15s' }}
@@ -195,14 +209,14 @@ const Dashboard = () => {
             {/* Grid de dias */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
               {cells.map((dia, idx) => {
-                if (!dia) return <div key={`e-${idx}`} style={{ minHeight: '100px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6', background: '#fafafa' }} />;
+                if (!dia) return <div key={`e-${idx}`} style={{ minHeight: '110px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6', background: '#fafafa' }} />;
                 const isHoje = hoje.getDate() === dia && hoje.getMonth() === mes && hoje.getFullYear() === ano;
                 const osNoDia = osPorDia[dia] || [];
                 const isWeekend = ((primeiroDia + dia - 1) % 7 === 0) || ((primeiroDia + dia - 1) % 7 === 6);
                 return (
                   <div key={dia} style={{
-                    minHeight: '120px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6',
-                    padding: '6px', background: isWeekend ? '#fafafa' : 'white',
+                    minHeight: '140px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6',
+                    padding: '8px 6px', background: isWeekend ? '#fafafa' : 'white',
                     position: 'relative',
                   }}>
                     {/* Número do dia */}
@@ -216,29 +230,31 @@ const Dashboard = () => {
                       {dia}
                     </div>
                     {/* Programação do dia */}
-                    {(progPorDia[dia] || []).slice(0, 1).map((p, pi) => (
+                    {(progPorDia[dia] || []).slice(0, 2).map((p, pi) => (
                       <div key={`p-${pi}`} onClick={() => navigate('/programacao')} style={{
                         padding: '2px 6px', borderRadius: '4px', marginBottom: '2px', cursor: 'pointer',
                         background: '#f5f3ff',
                         borderLeft: '2px solid #7c3aed',
-                        fontSize: '11px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        fontSize: '10.5px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        lineHeight: '1.4',
                       }} title={p.titulo || p.cliente || 'Programação'}>
                         <span style={{ fontWeight: '600', color: '#7c3aed' }}>◆</span>{' '}{p.titulo || p.cliente || 'Prog.'}
                       </div>
                     ))}
                     {/* OS do dia */}
-                    {osNoDia.slice(0, 2).map(o => (
+                    {osNoDia.slice(0, 3).map(o => (
                       <div key={o.id} onClick={() => navigate('/ordens-servico')} style={{
                         padding: '2px 6px', borderRadius: '4px', marginBottom: '2px', cursor: 'pointer',
                         background: (STATUS_COLOR[o.status] || '#9ca3af') + '20',
                         borderLeft: `2px solid ${STATUS_COLOR[o.status] || '#9ca3af'}`,
-                        fontSize: '11px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        fontSize: '10.5px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        lineHeight: '1.4',
                       }} title={`${o.numero} — ${o.cliente}`}>
                         <span style={{ fontWeight: '600', color: STATUS_COLOR[o.status] || '#9ca3af' }}>●</span>{' '}{o.cliente}
                       </div>
                     ))}
-                    {(osNoDia.length + (progPorDia[dia] || []).length) > 3 && (
-                      <div style={{ fontSize: '10px', color: '#9ca3af', paddingLeft: '4px' }}>+{osNoDia.length + (progPorDia[dia]||[]).length - 3} mais</div>
+                    {(osNoDia.length + (progPorDia[dia] || []).length) > 5 && (
+                      <div style={{ fontSize: '10px', color: '#9ca3af', paddingLeft: '4px' }}>+{osNoDia.length + (progPorDia[dia]||[]).length - 5} mais</div>
                     )}
                   </div>
                 );
@@ -246,6 +262,87 @@ const Dashboard = () => {
             </div>
           </>
         )}
+      </div>
+
+      {/* Painel de Avarias + Ranking Vendedores */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '20px' }}>
+
+        {/* Painel Avarias */}
+        <div style={{ background: 'white', borderRadius: '12px', border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '0.5px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertTriangle size={15} color="#ef4444" />
+              <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a', margin: 0 }}>Painel de Avarias</h3>
+            </div>
+            <button onClick={() => navigate('/avarias')} style={{ fontSize: '11px', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Ver todas →</button>
+          </div>
+          <div style={{ padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', borderBottom: '1px solid #f3f4f6' }}>
+            {[
+              { label: 'Abertas', count: avarias.filter(a => a.status === 'aberta').length, bg: '#fee2e2', c: '#b91c1c' },
+              { label: 'Em resolução', count: avarias.filter(a => a.status === 'em_resolucao').length, bg: '#dbeafe', c: '#1d4ed8' },
+              { label: 'Encerradas', count: avarias.filter(a => a.status === 'encerrada').length, bg: '#f0fdf4', c: '#15803d' },
+            ].map((s, i) => (
+              <div key={i} style={{ background: s.bg, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '22px', fontWeight: '800', color: s.c }}>{s.count}</div>
+                <div style={{ fontSize: '11px', color: s.c, fontWeight: '500' }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: '12px 16px' }}>
+            {avarias.filter(a => a.status === 'aberta' || a.status === 'em_resolucao').slice(0, 3).length === 0 ? (
+              <p style={{ color: '#9ca3af', fontSize: '12px', textAlign: 'center', padding: '8px 0', margin: 0 }}>Nenhuma avaria pendente ✓</p>
+            ) : (
+              avarias.filter(a => a.status === 'aberta' || a.status === 'em_resolucao').slice(0, 3).map((a, i) => (
+                <div key={i} onClick={() => navigate('/avarias')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < 2 ? '1px solid #f3f4f6' : 'none', cursor: 'pointer' }}>
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#111827' }}>{a.cliente || '—'}</div>
+                    <div style={{ fontSize: '11px', color: '#9ca3af' }}>{a.tipo ? a.tipo.replace(/_/g, ' ') : 'Avaria'} · {a.os_numero || '—'}</div>
+                  </div>
+                  <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: '600', background: a.status === 'aberta' ? '#fee2e2' : '#dbeafe', color: a.status === 'aberta' ? '#b91c1c' : '#1d4ed8' }}>
+                    {a.status === 'aberta' ? 'Aberta' : 'Em resolução'}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Ranking Vendedores */}
+        <div style={{ background: 'white', borderRadius: '12px', border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '0.5px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Trophy size={15} color="#f59e0b" />
+              <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a', margin: 0 }}>Ranking Vendedores</h3>
+            </div>
+            <button onClick={() => navigate('/metas')} style={{ fontSize: '11px', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Painel Comercial →</button>
+          </div>
+          <div style={{ padding: '8px 16px' }}>
+            {rankingVendedores.length === 0 ? (
+              <p style={{ color: '#9ca3af', fontSize: '12px', textAlign: 'center', padding: '16px 0', margin: 0 }}>Configure vendedores nas Configurações</p>
+            ) : (
+              rankingVendedores.slice(0, 5).map((v, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}º`;
+                const userColor = ['#3b82f6','#10b981','#8b5cf6','#f59e0b','#ef4444'][i % 5];
+                return (
+                  <div key={v.id || i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: i < rankingVendedores.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                    <span style={{ fontSize: '18px', width: '24px', textAlign: 'center' }}>{medal}</span>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: userColor, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '700', fontSize: '13px' }}>
+                      {(v.nome || v.name || 'U').charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#111827' }}>{v.nome || v.name}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>{v.cargo || v.role || 'Vendedor'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: userColor }}>{v.os_count || v.total_os || 0} OS</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>{v.conversao ? `${v.conversao}%` : '—'}</div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       </div>
 
       {/* OS da semana atual */}

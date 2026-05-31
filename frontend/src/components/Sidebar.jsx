@@ -6,56 +6,58 @@ import {
   UserCheck, ClipboardList, BarChart2, AlertTriangle, LogOut, Star, Eye,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { usePermissoes } from '../hooks/usePermissoes';
+import BuscaGlobal from './BuscaGlobal';
 
 const menuGroups = [
   {
     label: 'Executivo',
     items: [
-      { id: 'painel-executivo',       label: 'Painel Executivo',     icon: Star,            path: '/painel-executivo', badge: 'novo' },
-      { id: 'dashboard',              label: 'Dashboard',            icon: LayoutDashboard, path: '/dashboard' },
+      { id: 'painel-executivo',       label: 'Painel Executivo',     icon: Star,            path: '/painel-executivo', modulo: 'dashboard' },
+      { id: 'dashboard',              label: 'Dashboard',            icon: LayoutDashboard, path: '/dashboard',         modulo: 'dashboard' },
     ]
   },
   {
     label: 'CRM Comercial',
     items: [
-      { id: 'leads',                  label: 'Leads',                icon: UserCheck,       path: '/leads' },
-      { id: 'clientes',               label: 'Clientes',             icon: Users,           path: '/clientes' },
-      { id: 'organizers',             label: 'Organizers',           icon: Heart,           path: '/organizers' },
+      { id: 'leads',                  label: 'Leads',                icon: UserCheck,       path: '/leads',             modulo: 'leads' },
+      { id: 'clientes',               label: 'Clientes',             icon: Users,           path: '/clientes',          modulo: 'clientes' },
+      { id: 'organizers',             label: 'Organizers',           icon: Heart,           path: '/organizers',        modulo: 'organizers' },
     ]
   },
   {
     label: 'Operação',
     items: [
-      { id: 'orcamentos',             label: 'Orçamentos',           icon: FileText,        path: '/orcamentos' },
-      { id: 'cadastro-complementar',  label: 'Cadastro Compl.',      icon: ClipboardList,   path: '/cadastro-complementar' },
-      { id: 'contratos',              label: 'Contratos',            icon: FileCheck,       path: '/contratos' },
-      { id: 'ordens-servico',         label: 'Ordens de Serviço',    icon: Truck,           path: '/ordens-servico' },
-      { id: 'programacao',            label: 'Programação',          icon: Zap,             path: '/programacao' },
+      { id: 'orcamentos',             label: 'Orçamentos',           icon: FileText,        path: '/orcamentos',        modulo: 'orcamentos' },
+      { id: 'cadastro-complementar',  label: 'Cadastro Compl.',      icon: ClipboardList,   path: '/cadastro-complementar', modulo: 'contratos' },
+      { id: 'contratos',              label: 'Contratos',            icon: FileCheck,       path: '/contratos',         modulo: 'contratos' },
+      { id: 'ordens-servico',         label: 'Ordens de Serviço',    icon: Truck,           path: '/ordens-servico',    modulo: 'os' },
+      { id: 'programacao',            label: 'Programação',          icon: Zap,             path: '/programacao',       modulo: 'programacao' },
     ]
   },
   {
     label: 'Recursos',
     items: [
-      { id: 'estoque',                label: 'Estoque',              icon: Package,         path: '/estoque' },
-      { id: 'guarda-moveis',          label: 'Guarda-Móveis',        icon: Archive,         path: '/guarda-moveis' },
-      { id: 'avarias',                label: 'Avarias',              icon: AlertTriangle,   path: '/avarias', badge: 'novo' },
+      { id: 'estoque',                label: 'Estoque',              icon: Package,         path: '/estoque',           modulo: 'estoque' },
+      { id: 'guarda-moveis',          label: 'Guarda-Móveis',        icon: Archive,         path: '/guarda-moveis',     modulo: 'guarda_moveis' },
+      { id: 'avarias',                label: 'Avarias',              icon: AlertTriangle,   path: '/avarias', modulo: 'avarias' },
     ]
   },
   {
     label: 'Financeiro',
     items: [
-      { id: 'recibos',                    label: 'Recibos',               icon: Receipt,     path: '/recibos' },
-      { id: 'financeiro',                 label: 'Financeiro',            icon: DollarSign,  path: '/financeiro' },
-      { id: 'fechamento-operacional',     label: 'Fechamento Operac.',    icon: BarChart2,   path: '/fechamento-operacional' },
-      { id: 'fechamento',                 label: 'Fechamento Mensal',     icon: Receipt,     path: '/fechamento-financeiro' },
-      { id: 'metas',                      label: 'Painel Comercial',      icon: Target,      path: '/metas' },
+      { id: 'recibos',                    label: 'Recibos',               icon: Receipt,     path: '/recibos',               modulo: 'recibos' },
+      { id: 'financeiro',                 label: 'Financeiro',            icon: DollarSign,  path: '/financeiro',            modulo: 'financeiro' },
+      { id: 'fechamento-operacional',     label: 'Fechamento Operac.',    icon: BarChart2,   path: '/fechamento-operacional', modulo: 'fechamento' },
+      { id: 'fechamento',                 label: 'Fechamento Mensal',     icon: Receipt,     path: '/fechamento-financeiro', modulo: 'fechamento' },
+      { id: 'metas',                      label: 'Painel Comercial',      icon: Target,      path: '/metas',                 modulo: 'metas' },
     ]
   },
   {
     label: 'Sistema',
     items: [
-      { id: 'controladoria',          label: 'Controladoria',        icon: Eye,             path: '/controladoria' },
-      { id: 'configuracoes',          label: 'Configurações',        icon: Settings,        path: '/configuracoes' },
+      { id: 'controladoria',          label: 'Controladoria',        icon: Eye,             path: '/controladoria',     modulo: 'controladoria' },
+      { id: 'configuracoes',          label: 'Configurações',        icon: Settings,        path: '/configuracoes',     modulo: 'configuracoes' },
     ]
   }
 ];
@@ -71,6 +73,7 @@ const Sidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { pode, isAdmin } = usePermissoes();
 
   const handleLogout = () => {
     if (confirm('Deseja sair do sistema?')) {
@@ -125,9 +128,17 @@ const Sidebar = () => {
         </div>
       )}
 
+      {/* Busca Global */}
+      <BuscaGlobal />
+
       {/* Menu agrupado */}
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
-        {menuGroups.map((group) => (
+        {menuGroups.map((group) => {
+          const visibleItems = group.items.filter(item =>
+            isAdmin || !item.modulo || pode(item.modulo, 'ver')
+          );
+          if (visibleItems.length === 0) return null;
+          return (
           <div key={group.label} style={{ marginBottom: '4px' }}>
             <div style={{
               fontSize: '9px', fontWeight: '700', color: 'rgba(255,255,255,0.28)',
@@ -136,7 +147,7 @@ const Sidebar = () => {
               {group.label}
             </div>
             <ul style={{ listStyle: 'none', margin: 0, padding: '0 8px' }}>
-              {group.items.map((item) => {
+              {visibleItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);
                 return (
@@ -182,7 +193,8 @@ const Sidebar = () => {
               })}
             </ul>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Logout */}

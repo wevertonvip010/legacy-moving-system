@@ -1,941 +1,901 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Settings, 
-  Users, 
-  Shield, 
-  Key, 
-  Building2, 
-  Mail, 
-  Phone, 
-  MapPin,
-  Plus,
-  Edit,
-  Trash2,
-  Eye,
-  EyeOff,
-  Save,
-  RefreshCw,
-  Lock,
-  Unlock,
-  UserCheck,
-  Calendar,
-  CheckCircle,
-  AlertCircle,
-  UserX,
-  Bot,
-  Globe,
-  Database,
-  Bell,
-  Palette
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Settings, Users, Shield, Key, Building2, Mail, Phone, MapPin,
+  Plus, Edit, Trash2, Eye, EyeOff, Save, RefreshCw, Lock, Unlock,
+  UserCheck, Calendar, CheckCircle, AlertCircle, UserX, Bot, Globe,
+  Database, Bell, FileText, Printer,
 } from 'lucide-react';
 import { useGoogleCalendar } from '../hooks/useGoogleCalendar';
+import { useAuth } from '../hooks/useAuth';
+import { api } from '../lib/api';
+
+/* ─── helpers de estilo ─────────────────────────────── */
+const card = {
+  background: '#fff', borderRadius: '10px',
+  boxShadow: '0 1px 4px rgba(0,0,0,0.08)', padding: '24px', marginBottom: '20px',
+};
+const label = {
+  display: 'block', fontSize: '13px', fontWeight: '500', color: '#374151', marginBottom: '6px',
+};
+const input = {
+  width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
+  borderRadius: '6px', fontSize: '14px', color: '#111827',
+  outline: 'none', boxSizing: 'border-box',
+};
+const inputIcon = { ...input, paddingLeft: '36px' };
+const btnPrimary = {
+  display: 'inline-flex', alignItems: 'center', gap: '6px',
+  padding: '8px 16px', background: '#2563eb', color: '#fff',
+  border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '500',
+  cursor: 'pointer',
+};
+const btnDanger = { ...btnPrimary, background: '#dc2626' };
+const btnGray = {
+  ...btnPrimary, background: '#e5e7eb', color: '#374151',
+};
+const btnGreen = { ...btnPrimary, background: '#16a34a' };
+const btnPurple = { ...btnPrimary, background: '#7c3aed' };
+const iconWrap = { position: 'relative', display: 'flex', alignItems: 'center' };
+const iconAbs = {
+  position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)',
+  color: '#9ca3af', pointerEvents: 'none',
+};
+
+// ── ABA DOCUMENTOS ──────────────────────────────────────────────────────────
+const TEMPLATE_DEFAULTS = {
+  empresa_nome: 'LEGACY MOVING',
+  empresa_cnpj: '',
+  empresa_endereco: '',
+  empresa_telefone: '',
+  empresa_email: 'legacymovingbr@gmail.com',
+  empresa_site: '',
+  orcamento_termos: 'Este orçamento é válido por 15 dias. Os valores estão sujeitos a alteração sem aviso prévio.',
+  contrato_clausulas: '1. O serviço será realizado na data acordada.\n2. O cliente deve garantir acesso aos locais de origem e destino.\n3. Objetos frágeis devem ser informados previamente.',
+  recibo_observacoes: 'Recibo referente ao serviço de mudança prestado pela Legacy Moving.',
+  rodape: 'Legacy Moving — Transporte e Mudanças Especializadas',
+  numeracao_orc: 'ORC-{ANO}-{SEQ}',
+  numeracao_os: 'OS-{ANO}-{SEQ}',
+  numeracao_ct: 'CT-{ANO}-{SEQ}',
+};
+
+const fmt_input = {
+  width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
+  borderRadius: '6px', fontSize: '13px', color: '#111827',
+  outline: 'none', boxSizing: 'border-box',
+};
+
+const AbaDocumentos = () => {
+  const [config, setConfig] = useState(TEMPLATE_DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState(false);
+  const [preview, setPreview] = useState(null); // 'orcamento' | 'contrato' | 'recibo'
+
+  useEffect(() => {
+    api.getConfig()
+      .then(data => {
+        if (data && Object.keys(data).length > 0) {
+          setConfig(prev => ({ ...prev, ...data }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      await api.setConfig(config);
+      setSalvo(true);
+      setTimeout(() => setSalvo(false), 2000);
+    } catch (e) { alert(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const inp = (field, label, placeholder, multiline = false) => (
+    <div style={{ marginBottom: '12px' }}>
+      <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>{label}</label>
+      {multiline ? (
+        <textarea value={config[field] || ''} onChange={e => setConfig(c => ({ ...c, [field]: e.target.value }))}
+          placeholder={placeholder} rows={3}
+          style={{ ...fmt_input, resize: 'vertical', fontFamily: 'inherit' }} />
+      ) : (
+        <input value={config[field] || ''} onChange={e => setConfig(c => ({ ...c, [field]: e.target.value }))}
+          placeholder={placeholder} style={fmt_input} />
+      )}
+    </div>
+  );
+
+  if (loading) return <div style={{ padding: '32px', textAlign: 'center', color: '#9ca3af' }}>Carregando...</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: '#111827' }}>Modelos de Documentos</h3>
+          <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#6b7280' }}>Configure o cabeçalho, termos e numeração dos documentos gerados pelo sistema</p>
+        </div>
+        <button onClick={salvar} disabled={salvando}
+          style={{ ...btnPrimary, background: salvo ? '#16a34a' : '#0f1f3d', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          {salvo ? <CheckCircle size={14} /> : <Save size={14} />}
+          {salvo ? 'Salvo!' : salvando ? 'Salvando...' : 'Salvar Templates'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+        {/* Dados da Empresa */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '20px' }}>
+          <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Building2 size={16} color="#2563eb" /> Dados da Empresa nos Documentos
+          </h4>
+          {inp('empresa_nome', 'Nome / Razão Social', 'LEGACY MOVING LTDA')}
+          {inp('empresa_cnpj', 'CNPJ', '00.000.000/0001-00')}
+          {inp('empresa_endereco', 'Endereço Completo', 'Rua..., Nº..., Bairro, Cidade - UF')}
+          {inp('empresa_telefone', 'Telefone', '(11) 99999-9999')}
+          {inp('empresa_email', 'E-mail', 'contato@legacymoving.com.br')}
+          {inp('empresa_site', 'Site', 'www.legacymoving.com.br')}
+          {inp('rodape', 'Rodapé dos documentos', 'Legacy Moving — Transporte Especializado')}
+        </div>
+
+        {/* Numeração Automática */}
+        <div>
+          <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
+            <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FileText size={16} color="#7c3aed" /> Numeração Automática
+            </h4>
+            <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 12px' }}>
+              Use <code style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px' }}>{'{ANO}'}</code> para o ano atual e <code style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px' }}>{'{SEQ}'}</code> para o número sequencial.
+            </p>
+            {inp('numeracao_orc', 'Formato Orçamento', 'ORC-{ANO}-{SEQ}')}
+            {inp('numeracao_ct', 'Formato Contrato', 'CT-{ANO}-{SEQ}')}
+            {inp('numeracao_os', 'Formato OS', 'OS-{ANO}-{SEQ}')}
+          </div>
+
+          {/* Preview Botões */}
+          <div style={{ background: '#f0f4ff', borderRadius: '10px', border: '1px solid #c7d2fe', padding: '16px' }}>
+            <h4 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: '600', color: '#2563eb' }}>
+              👁 Pré-visualizar Documento
+            </h4>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {[['orcamento', 'Orçamento'], ['contrato', 'Contrato'], ['recibo', 'Recibo']].map(([tipo, label]) => (
+                <button key={tipo} onClick={() => setPreview(tipo)}
+                  style={{ padding: '7px 14px', background: 'white', border: '1px solid #c7d2fe', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '500', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Printer size={12} /> Preview {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Termos do Orçamento */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '20px' }}>
+          <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FileText size={16} color="#16a34a" /> Termos do Orçamento
+          </h4>
+          {inp('orcamento_termos', 'Condições e validade', 'Este orçamento é válido por 15 dias...', true)}
+          {inp('orcamento_obs', 'Observações padrão', 'Inclui embalagem especial, seguro básico...', true)}
+        </div>
+
+        {/* Cláusulas do Contrato */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '20px' }}>
+          <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Shield size={16} color="#dc2626" /> Cláusulas do Contrato
+          </h4>
+          {inp('contrato_clausulas', 'Cláusulas padrão', '1. O serviço será realizado...', true)}
+          {inp('contrato_foro', 'Foro de eleição', 'Cidade de São Paulo - SP', false)}
+        </div>
+
+        {/* Recibo */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '20px', gridColumn: '1 / -1' }}>
+          <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FileText size={16} color="#ea580c" /> Modelo de Recibo
+          </h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>{inp('recibo_observacoes', 'Observações do recibo', 'Recibo referente ao serviço de mudança...', true)}</div>
+            <div>{inp('recibo_declaro', 'Declaração de recebimento', 'Declaro ter recebido a quantia acima referente...', true)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Preview */}
+      {preview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '0', width: '680px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '600' }}>Preview — {preview === 'orcamento' ? 'Orçamento' : preview === 'contrato' ? 'Contrato' : 'Recibo'}</h3>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => window.print()} style={{ ...btnPrimary, fontSize: '12px', padding: '6px 12px' }}><Printer size={12} /> Imprimir</button>
+                <button onClick={() => setPreview(null)} style={{ ...btnGray, fontSize: '12px', padding: '6px 12px' }}>Fechar</button>
+              </div>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '32px', background: '#f9fafb', flex: 1 }}>
+              <div style={{ background: 'white', maxWidth: '600px', margin: '0 auto', padding: '40px', border: '1px solid #e5e7eb', borderRadius: '8px', fontFamily: 'Arial, sans-serif' }}>
+                {/* Cabeçalho */}
+                <div style={{ borderBottom: '2px solid #0f1f3d', paddingBottom: '16px', marginBottom: '24px' }}>
+                  <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '700', color: '#0f1f3d' }}>{config.empresa_nome || 'LEGACY MOVING'}</h1>
+                  <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#6b7280' }}>
+                    {config.empresa_cnpj && `CNPJ: ${config.empresa_cnpj} | `}
+                    {config.empresa_telefone && `Tel: ${config.empresa_telefone} | `}
+                    {config.empresa_email}
+                  </p>
+                  {config.empresa_endereco && <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#6b7280' }}>{config.empresa_endereco}</p>}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#374151' }}>
+                    {preview === 'orcamento' ? 'ORÇAMENTO' : preview === 'contrato' ? 'CONTRATO DE PRESTAÇÃO DE SERVIÇOS' : 'RECIBO DE PAGAMENTO'}
+                  </h2>
+                  <div style={{ textAlign: 'right', fontSize: '13px', color: '#6b7280' }}>
+                    <p style={{ margin: 0, fontWeight: '600' }}>
+                      Nº: {preview === 'orcamento' ? (config.numeracao_orc || 'ORC-{ANO}-{SEQ}') : preview === 'contrato' ? (config.numeracao_ct || 'CT-{ANO}-{SEQ}') : 'REC-{ANO}-{SEQ}'}
+                    </p>
+                    <p style={{ margin: '2px 0 0' }}>Data: {new Date().toLocaleDateString('pt-BR')}</p>
+                  </div>
+                </div>
+
+                {/* Dados do Cliente (placeholder) */}
+                <div style={{ background: '#f9fafb', padding: '12px', borderRadius: '6px', marginBottom: '20px', fontSize: '13px' }}>
+                  <p style={{ margin: 0, fontWeight: '600', color: '#374151' }}>Cliente: [Nome do Cliente]</p>
+                  <p style={{ margin: '4px 0 0', color: '#6b7280' }}>Endereço: [Endereço de Origem] → [Endereço de Destino]</p>
+                  <p style={{ margin: '4px 0 0', color: '#6b7280' }}>Tel: [Telefone] | E-mail: [E-mail]</p>
+                </div>
+
+                {/* Serviço */}
+                <div style={{ marginBottom: '20px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: '#0f1f3d', color: 'white' }}>
+                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Descrição</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right' }}>Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <td style={{ padding: '10px 12px' }}>Serviço de Mudança Completa</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '600' }}>R$ [Valor]</td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: '#f9fafb' }}>
+                        <td style={{ padding: '10px 12px', fontWeight: '700' }}>TOTAL</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', fontSize: '16px', color: '#0f1f3d' }}>R$ [Valor]</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Termos */}
+                {preview === 'orcamento' && config.orcamento_termos && (
+                  <div style={{ fontSize: '12px', color: '#6b7280', borderTop: '1px solid #e5e7eb', paddingTop: '12px', marginBottom: '20px' }}>
+                    <p style={{ margin: '0 0 4px', fontWeight: '600', color: '#374151' }}>Condições:</p>
+                    <p style={{ margin: 0, whiteSpace: 'pre-line' }}>{config.orcamento_termos}</p>
+                  </div>
+                )}
+                {preview === 'contrato' && config.contrato_clausulas && (
+                  <div style={{ fontSize: '12px', color: '#6b7280', borderTop: '1px solid #e5e7eb', paddingTop: '12px', marginBottom: '20px' }}>
+                    <p style={{ margin: '0 0 4px', fontWeight: '600', color: '#374151' }}>Cláusulas:</p>
+                    <p style={{ margin: 0, whiteSpace: 'pre-line' }}>{config.contrato_clausulas}</p>
+                  </div>
+                )}
+
+                {/* Assinaturas */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ borderTop: '1px solid #374151', paddingTop: '8px', fontSize: '12px', color: '#374151' }}>
+                      <p style={{ margin: 0, fontWeight: '600' }}>{config.empresa_nome || 'LEGACY MOVING'}</p>
+                      <p style={{ margin: '2px 0 0', color: '#6b7280' }}>Prestador de Serviço</p>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ borderTop: '1px solid #374151', paddingTop: '8px', fontSize: '12px', color: '#374151' }}>
+                      <p style={{ margin: 0, fontWeight: '600' }}>Cliente</p>
+                      <p style={{ margin: '2px 0 0', color: '#6b7280' }}>Contratante</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rodapé */}
+                {config.rodape && (
+                  <div style={{ textAlign: 'center', marginTop: '24px', paddingTop: '12px', borderTop: '1px solid #e5e7eb', fontSize: '11px', color: '#9ca3af' }}>
+                    {config.rodape}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MODULOS_PERM = [
+  { id: 'dashboard',     label: 'Dashboard' },
+  { id: 'leads',         label: 'Leads' },
+  { id: 'clientes',      label: 'Clientes' },
+  { id: 'organizers',    label: 'Organizers' },
+  { id: 'orcamentos',    label: 'Orçamentos' },
+  { id: 'contratos',     label: 'Contratos' },
+  { id: 'os',            label: 'Ordens de Serviço' },
+  { id: 'programacao',   label: 'Programação' },
+  { id: 'estoque',       label: 'Estoque' },
+  { id: 'guarda_moveis', label: 'Guarda-Móveis' },
+  { id: 'recibos',       label: 'Recibos' },
+  { id: 'financeiro',    label: 'Financeiro' },
+  { id: 'fechamento',    label: 'Fechamento' },
+  { id: 'metas',         label: 'Metas' },
+  { id: 'avarias',       label: 'Avarias' },
+  { id: 'configuracoes', label: 'Configurações' },
+  { id: 'controladoria', label: 'Controladoria' },
+  { id: 'mirante',       label: 'IA Mirante' },
+];
+const ACOES_PERM = ['ver', 'criar', 'editar', 'excluir'];
 
 const Configuracoes = () => {
   const [abaAtiva, setAbaAtiva] = useState('usuarios');
   const [modalUsuario, setModalUsuario] = useState(false);
   const [usuarioEditando, setUsuarioEditando] = useState(null);
   const [mostrarSenha, setMostrarSenha] = useState(false);
-  
-  // Google Calendar
-  const { 
-    isConfigured, 
-    configure, 
-    syncEvents, 
-    getSyncStatus,
-    isLoading 
-  } = useGoogleCalendar();
-  
+  const [modalPermissoes, setModalPermissoes] = useState(null); // usuario obj
+  const [permMatriz, setPermMatriz] = useState({}); // { modulo: { ver, criar, editar, excluir } }
+  const [salvendoPerm, setSalvendoPerm] = useState(false);
+
+  const { isConfigured, configure, syncEvents, getSyncStatus, isLoading } = useGoogleCalendar();
+
   const [googleCalendarConfig, setGoogleCalendarConfig] = useState({
-    apiKey: '',
-    accessToken: '',
-    calendarId: 'vip@vipmudancas.com.br'
-  });
-  
-  const [configEmpresa, setConfigEmpresa] = useState({
-    nome: 'VIP Mudanças',
-    cnpj: '12.345.678/0001-90',
-    email: 'contato@vipmudancas.com.br',
-    telefone: '(11) 99999-9999',
-    endereco: 'Rua das Mudanças, 123 - São Paulo/SP',
-    site: 'https://vipmudancas.com.br'
+    apiKey: '', accessToken: '', calendarId: 'legacymovingbr@gmail.com',
   });
 
-  // Dados mockados de usuários
+  const [configEmpresa, setConfigEmpresa] = useState({
+    nome: 'Legacy Moving', cnpj: '', email: 'legacymovingbr@gmail.com',
+    telefone: '', endereco: '', site: '',
+  });
+
   const [usuarios, setUsuarios] = useState([
-    {
-      id: 1,
-      nome: 'Administrador VIP',
-      email: 'admin@vip.com.br',
-      cargo: 'Admin',
-      permissoes: ['dashboard', 'clientes', 'financeiro', 'vendas', 'estoque', 'configuracoes'],
-      status: 'ativo',
-      ultimoAcesso: '21/06/2024 15:30',
-      dataCriacao: '01/01/2024'
-    },
-    {
-      id: 2,
-      nome: 'Kenneth Silva',
-      email: 'kenneth@vip.com.br',
-      cargo: 'Comercial',
-      permissoes: ['dashboard', 'clientes', 'vendas', 'orcamentos', 'contratos'],
-      status: 'ativo',
-      ultimoAcesso: '21/06/2024 14:15',
-      dataCriacao: '15/01/2024'
-    },
-    {
-      id: 3,
-      nome: 'Douglas Santos',
-      email: 'douglas@vip.com.br',
-      cargo: 'Financeiro',
-      permissoes: ['dashboard', 'financeiro', 'clientes'],
-      status: 'ativo',
-      ultimoAcesso: '21/06/2024 13:45',
-      dataCriacao: '20/01/2024'
-    },
-    {
-      id: 4,
-      nome: 'Maciel Oliveira',
-      email: 'maciel@vip.com.br',
-      cargo: 'Operacional',
-      permissoes: ['dashboard', 'ordens-servico', 'estoque', 'visitas'],
-      status: 'ativo',
-      ultimoAcesso: '21/06/2024 12:30',
-      dataCriacao: '25/01/2024'
-    },
-    {
-      id: 5,
-      nome: 'Diego Costa',
-      email: 'diego@vip.com.br',
-      cargo: 'Operacional',
-      permissoes: ['dashboard', 'ordens-servico', 'estoque'],
-      status: 'inativo',
-      ultimoAcesso: '15/06/2024 16:20',
-      dataCriacao: '30/01/2024'
-    }
+    { id: 1, nome: 'Administrador Legacy M.', email: 'admin@legacy.com.br', cargo: 'Admin', permissoes: ['dashboard', 'clientes', 'financeiro', 'vendas', 'estoque', 'configuracoes'], status: 'ativo', ultimoAcesso: '21/06/2024 15:30' },
+    { id: 2, nome: 'Kenneth Silva', email: 'kenneth@legacy.com.br', cargo: 'Comercial', permissoes: ['dashboard', 'clientes', 'vendas', 'orcamentos', 'contratos'], status: 'ativo', ultimoAcesso: '21/06/2024 14:15' },
+    { id: 3, nome: 'Douglas Santos', email: 'douglas@legacy.com.br', cargo: 'Financeiro', permissoes: ['dashboard', 'financeiro', 'clientes'], status: 'ativo', ultimoAcesso: '21/06/2024 13:45' },
+    { id: 4, nome: 'Maciel Oliveira', email: 'maciel@legacy.com.br', cargo: 'Operacional', permissoes: ['dashboard', 'ordens-servico', 'estoque'], status: 'ativo', ultimoAcesso: '21/06/2024 12:30' },
+    { id: 5, nome: 'Diego Costa', email: 'diego@legacy.com.br', cargo: 'Operacional', permissoes: ['dashboard', 'ordens-servico', 'estoque'], status: 'inativo', ultimoAcesso: '15/06/2024 16:20' },
   ]);
 
   const [configSistema, setConfigSistema] = useState({
-    anthropicApiKey: '',
-    urlWebhook: '',
-    emailNotificacoes: true,
-    backupAutomatico: true,
-    manutencaoAgendada: false,
-    versaoSistema: 'v2.0',
-    ultimoBackup: '21/05/2026 02:00'
+    anthropicApiKey: '', urlWebhook: '', emailNotificacoes: true,
+    backupAutomatico: true, manutencaoAgendada: false,
+    versaoSistema: 'v2.0', ultimoBackup: '21/05/2026 02:00',
   });
 
   const permissoesDisponiveis = [
-    { id: 'dashboard', nome: 'Dashboard', descricao: 'Acesso ao painel principal' },
-    { id: 'clientes', nome: 'Clientes', descricao: 'Gerenciar clientes' },
-    { id: 'vendas', nome: 'Vendas', descricao: 'Pipeline de vendas e CRM' },
-    { id: 'financeiro', nome: 'Financeiro', descricao: 'Gestão financeira completa' },
-    { id: 'estoque', nome: 'Estoque', descricao: 'Controle de estoque' },
-    { id: 'orcamentos', nome: 'Orçamentos', descricao: 'Criar e gerenciar orçamentos' },
-    { id: 'contratos', nome: 'Contratos', descricao: 'Gestão de contratos' },
-    { id: 'ordens-servico', nome: 'Ordens de Serviço', descricao: 'Gerenciar ordens de serviço' },
-    { id: 'visitas', nome: 'Visitas', descricao: 'Agendar e gerenciar visitas' },
-    { id: 'self-storage', nome: 'Self Storage', descricao: 'Gestão de boxes' },
-    { id: 'marketing', nome: 'Marketing', descricao: 'Campanhas e marketing' },
-    { id: 'graficos', nome: 'Gráficos', descricao: 'Relatórios e análises' },
-    { id: 'configuracoes', nome: 'Configurações', descricao: 'Configurações do sistema' }
+    { id: 'dashboard', nome: 'Dashboard' }, { id: 'clientes', nome: 'Clientes' },
+    { id: 'vendas', nome: 'Vendas' }, { id: 'financeiro', nome: 'Financeiro' },
+    { id: 'estoque', nome: 'Estoque' }, { id: 'orcamentos', nome: 'Orçamentos' },
+    { id: 'contratos', nome: 'Contratos' }, { id: 'ordens-servico', nome: 'Ordens de Serviço' },
+    { id: 'visitas', nome: 'Visitas' }, { id: 'self-storage', nome: 'Self Storage' },
+    { id: 'marketing', nome: 'Marketing' }, { id: 'graficos', nome: 'Gráficos' },
+    { id: 'configuracoes', nome: 'Configurações' },
   ];
 
-  const cargosPermissoes = {
-    'Admin': ['dashboard', 'clientes', 'vendas', 'financeiro', 'estoque', 'orcamentos', 'contratos', 'ordens-servico', 'visitas', 'self-storage', 'marketing', 'graficos', 'configuracoes'],
-    'Comercial': ['dashboard', 'clientes', 'vendas', 'orcamentos', 'contratos', 'visitas', 'marketing'],
-    'Operacional': ['dashboard', 'ordens-servico', 'estoque', 'visitas', 'self-storage'],
-    'Financeiro': ['dashboard', 'financeiro', 'clientes', 'contratos', 'graficos']
+  const [loadingUsuarios, setLoadingUsuarios] = useState(false);
+  const [salvendoUsuario, setSalvendoUsuario] = useState(false);
+  const formRef = useRef({});
+
+  // Carrega usuários da API
+  useEffect(() => {
+    setLoadingUsuarios(true);
+    api.getUsuarios()
+      .then(data => {
+        const lista = Array.isArray(data) ? data : (data?.items || []);
+        if (lista.length > 0) setUsuarios(lista.map(u => ({
+          id: u.id, nome: u.nome || u.name, email: u.email || '',
+          cargo: u.role || u.cargo || 'Operacional',
+          permissoes: u.permissoes || [],
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          ultimoAcesso: u.ultimo_acesso || '—',
+        })));
+      })
+      .catch(() => {}); // Mantém os dados mock se a API falhar
+    setLoadingUsuarios(false);
+  }, []);
+
+  const adicionarUsuario = () => { setUsuarioEditando(null); setModalUsuario(true); };
+  const editarUsuario = (u) => { setUsuarioEditando(u); setModalUsuario(true); };
+
+  const salvarUsuario = async () => {
+    const nome = formRef.current.nome?.value?.trim();
+    const email = formRef.current.email?.value?.trim();
+    const cargo = formRef.current.cargo?.value;
+    const senha = formRef.current.senha?.value;
+    if (!nome || !email) { alert('Nome e email são obrigatórios.'); return; }
+    setSalvendoUsuario(true);
+    try {
+      if (usuarioEditando) {
+        const payload = { name: nome, email, role: cargo };
+        if (senha) payload.password = senha;
+        await api.updateUsuario(usuarioEditando.id, payload);
+      } else {
+        if (!senha) { alert('Senha é obrigatória para novos usuários.'); setSalvendoUsuario(false); return; }
+        // CPF gerado automaticamente a partir do email (único por default)
+        const cpf = email.split('@')[0].replace(/\W/g, '').substring(0, 11).padEnd(11, '0');
+        await api.createUsuario({ name: nome, email, role: cargo, password: senha, cpf });
+      }
+      // Recarrega lista
+      const data = await api.getUsuarios();
+      const lista = Array.isArray(data) ? data : (data?.items || []);
+      setUsuarios(lista.map(u => ({
+        id: u.id, nome: u.nome || u.name, email: u.email || '',
+        cargo: u.role || u.cargo || 'Operacional',
+        permissoes: u.permissoes || [],
+        status: u.ativo === false ? 'inativo' : 'ativo',
+        ultimoAcesso: u.ultimo_acesso || '—',
+      })));
+      setModalUsuario(false);
+    } catch (e) {
+      alert('Erro ao salvar usuário: ' + (e.message || 'Tente novamente.'));
+    } finally { setSalvendoUsuario(false); }
   };
 
-  const adicionarUsuario = () => {
-    setUsuarioEditando(null);
-    setModalUsuario(true);
+  const alterarStatus = async (id, novoStatus) => {
+    try {
+      await api.updateUsuario(id, { ativo: novoStatus === 'ativo' });
+      setUsuarios(us => us.map(u => u.id === id ? { ...u, status: novoStatus } : u));
+    } catch (e) { alert('Erro: ' + e.message); }
   };
 
-  const editarUsuario = (usuario) => {
-    setUsuarioEditando(usuario);
-    setModalUsuario(true);
+  const excluirUsuario = async (id) => {
+    if (!confirm('Excluir usuário permanentemente?')) return;
+    try {
+      await api.updateUsuario(id, { ativo: false }); // Soft delete — inativa
+      setUsuarios(us => us.filter(u => u.id !== id));
+    } catch (e) { alert('Erro: ' + e.message); }
   };
 
-  const salvarUsuario = () => {
-    alert('Usuário salvo com sucesso! (Mock)');
-    setModalUsuario(false);
-    setUsuarioEditando(null);
+  const abrirPermissoes = async (u) => {
+    setModalPermissoes(u);
+    try {
+      const perms = await api.getPermissoes(u.id);
+      if (perms && typeof perms === 'object' && !Array.isArray(perms)) {
+        setPermMatriz(perms);
+      } else {
+        setPermMatriz({});
+      }
+    } catch { setPermMatriz({}); }
   };
 
-  const alterarStatusUsuario = (id, novoStatus) => {
-    setUsuarios(usuarios.map(user => 
-      user.id === id ? { ...user, status: novoStatus } : user
-    ));
-    alert(`Usuário ${novoStatus === 'ativo' ? 'ativado' : 'desativado'} com sucesso!`);
+  const salvarPermissoes = async () => {
+    if (!modalPermissoes) return;
+    setSalvendoPerm(true);
+    try {
+      // null = usar defaults do role, {} empty = sem permissões granulares
+      const payload = Object.keys(permMatriz).length > 0 ? permMatriz : null;
+      await api.setPermissoes(modalPermissoes.id, payload);
+      setModalPermissoes(null);
+      alert('Permissões salvas!');
+    } catch (e) { alert('Erro ao salvar: ' + e.message); }
+    finally { setSalvendoPerm(false); }
   };
 
-  const excluirUsuario = (id) => {
-    if (confirm('Tem certeza que deseja excluir este usuário?')) {
-      setUsuarios(usuarios.filter(user => user.id !== id));
-      alert('Usuário excluído com sucesso!');
-    }
+  const togglePerm = (modulo, acao) => {
+    setPermMatriz(prev => ({
+      ...prev,
+      [modulo]: {
+        ...(prev[modulo] || {}),
+        [acao]: !(prev[modulo]?.[acao]),
+      }
+    }));
   };
 
-  const salvarConfigEmpresa = () => {
-    alert('Configurações da empresa salvas com sucesso! (Mock)');
+  const setAllModuloPerm = (modulo, valor) => {
+    setPermMatriz(prev => ({
+      ...prev,
+      [modulo]: Object.fromEntries(ACOES_PERM.map(a => [a, valor])),
+    }));
   };
 
-  const salvarConfigSistema = () => {
-    alert('Configurações do sistema salvas com sucesso! (Mock)');
-  };
+  const resetToRoleDefaults = () => setPermMatriz({});
+
+  const salvarConfigEmpresa = () => alert('Configurações da empresa salvas! (Mock)');
+  const salvarConfigSistema = () => alert('Configurações do sistema salvas! (Mock)');
 
   const testarIA = async () => {
-    if (!configSistema.anthropicApiKey) {
-      alert('Por favor, configure a chave da API Anthropic primeiro.');
-      return;
-    }
     try {
       const { api } = await import('../lib/api');
-      const res = await api.miranteChat('Olá! Apenas confirmando que a integração está funcionando.', []);
-      if (res?.resposta) {
-        alert('✅ Conexão com IA Mirante (Claude) funcionando!\n\nResposta: ' + res.resposta.substring(0, 100) + '...');
-      } else {
-        alert('✅ API Anthropic conectada com sucesso!');
-      }
-    } catch (e) {
-      alert('❌ Erro ao conectar com a IA Mirante. Verifique se o backend está rodando e se a chave ANTHROPIC_API_KEY está configurada no servidor.');
-    }
+      const res = await api.miranteChat('Teste de integração.', []);
+      alert(res?.resposta ? '✅ IA Mirante funcionando!\n\n' + res.resposta.substring(0, 120) : '✅ API Anthropic conectada!');
+    } catch { alert('❌ Erro ao conectar. Verifique se o backend está rodando.'); }
   };
 
-  // Função para configurar Google Calendar
-  const configurarGoogleCalendar = async () => {
-    if (!googleCalendarConfig.apiKey || !googleCalendarConfig.accessToken) {
-      alert('Por favor, preencha todos os campos obrigatórios.');
-      return;
-    }
-
-    const result = configure(googleCalendarConfig.apiKey, googleCalendarConfig.accessToken);
-    
-    if (result.success) {
-      alert('Google Calendar configurado com sucesso! Sincronização ativada.');
-    } else {
-      alert(`Erro ao configurar: ${result.error}`);
-    }
+  const configurarGoogleCalendar = () => {
+    if (!googleCalendarConfig.apiKey || !googleCalendarConfig.accessToken) { alert('Preencha todos os campos.'); return; }
+    const r = configure(googleCalendarConfig.apiKey, googleCalendarConfig.accessToken);
+    alert(r.success ? 'Google Calendar configurado!' : `Erro: ${r.error}`);
   };
 
-  const testarSincronizacao = async () => {
-    if (!isConfigured) {
-      alert('Configure o Google Calendar primeiro.');
-      return;
-    }
-    
-    await syncEvents();
-    alert('Sincronização testada com sucesso!');
-  };
+  /* ─── Aba Usuários ─────────────────────────────────── */
+  const renderAbaUsuarios = () => (
+    <div>
+      {/* header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div>
+          <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#111827', margin: 0 }}>Gestão de Usuários</h3>
+          <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>Gerencie usuários e suas permissões</p>
+        </div>
+        <button style={btnPrimary} onClick={adicionarUsuario}><Plus size={14} /> Novo Usuário</button>
+      </div>
 
-  const renderAbaGoogleCalendar = () => (
-    <div className="space-y-6">
+      {/* estatísticas */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+        {[
+          { icon: <Users size={22} color="#2563eb" />, label: 'Total', value: usuarios.length, bg: '#eff6ff', c: '#1d4ed8' },
+          { icon: <UserCheck size={22} color="#16a34a" />, label: 'Ativos', value: usuarios.filter(u => u.status === 'ativo').length, bg: '#f0fdf4', c: '#15803d' },
+          { icon: <UserX size={22} color="#dc2626" />, label: 'Inativos', value: usuarios.filter(u => u.status === 'inativo').length, bg: '#fef2f2', c: '#b91c1c' },
+          { icon: <Shield size={22} color="#7c3aed" />, label: 'Admins', value: usuarios.filter(u => u.cargo === 'Admin').length, bg: '#f5f3ff', c: '#6d28d9' },
+        ].map((s, i) => (
+          <div key={i} style={{ background: s.bg, borderRadius: '10px', padding: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {s.icon}
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '500', color: s.c }}>{s.label}</div>
+              <div style={{ fontSize: '22px', fontWeight: '800', color: s.c }}>{s.value}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* tabela */}
+      <div style={{ background: '#fff', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              {['Usuário', 'Cargo', 'Permissões', 'Status', 'Último Acesso', 'Ações'].map(h => (
+                <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {usuarios.map((u, i) => (
+              <tr key={u.id} style={{ borderBottom: '1px solid #f3f4f6', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                <td style={{ padding: '12px 16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '700', fontSize: '13px', flexShrink: 0 }}>
+                      {u.nome.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: '600', color: '#111827' }}>{u.nome}</div>
+                      <div style={{ fontSize: '12px', color: '#6b7280' }}>{u.email}</div>
+                    </div>
+                  </div>
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                  <span style={{
+                    padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600',
+                    background: u.cargo === 'Admin' ? '#f5f3ff' : u.cargo === 'Comercial' ? '#eff6ff' : u.cargo === 'Financeiro' ? '#f0fdf4' : '#fff7ed',
+                    color: u.cargo === 'Admin' ? '#6d28d9' : u.cargo === 'Comercial' ? '#1d4ed8' : u.cargo === 'Financeiro' ? '#15803d' : '#c2410c',
+                  }}>{u.cargo}</span>
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                  <div style={{ color: '#111827' }}>{u.permissoes.length} permissões</div>
+                  <div style={{ fontSize: '12px', color: '#6b7280' }}>{u.permissoes.slice(0, 2).join(', ')}{u.permissoes.length > 2 && ` +${u.permissoes.length - 2}`}</div>
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                  <span style={{ padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600', background: u.status === 'ativo' ? '#f0fdf4' : '#fef2f2', color: u.status === 'ativo' ? '#15803d' : '#b91c1c' }}>
+                    {u.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 16px', color: '#6b7280' }}>{u.ultimoAcesso}</td>
+                <td style={{ padding: '12px 16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button onClick={() => editarUsuario(u)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', padding: '4px' }} title="Editar"><Edit size={15} /></button>
+                    <button onClick={() => abrirPermissoes(u)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7c3aed', padding: '4px' }} title="Permissões Granulares"><Shield size={15} /></button>
+                    <button onClick={() => alterarStatus(u.id, u.status === 'ativo' ? 'inativo' : 'ativo')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: u.status === 'ativo' ? '#dc2626' : '#16a34a', padding: '4px' }} title={u.status === 'ativo' ? 'Desativar' : 'Ativar'}>
+                      {u.status === 'ativo' ? <Lock size={15} /> : <Unlock size={15} />}
+                    </button>
+                    {u.cargo !== 'Admin' && (
+                      <button onClick={() => excluirUsuario(u.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '4px' }} title="Excluir"><Trash2 size={15} /></button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  /* ─── Aba Empresa ──────────────────────────────────── */
+  const renderAbaEmpresa = () => (
+    <div>
+      <div style={{ marginBottom: '20px' }}>
+        <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#111827', margin: 0 }}>Informações da Empresa</h3>
+        <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>Configure os dados da sua empresa</p>
+      </div>
+      <div style={card}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div>
+            <span style={label}>Nome da Empresa</span>
+            <div style={iconWrap}>
+              <span style={iconAbs}><Building2 size={15} /></span>
+              <input style={inputIcon} value={configEmpresa.nome} onChange={e => setConfigEmpresa({ ...configEmpresa, nome: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <span style={label}>CNPJ</span>
+            <input style={input} value={configEmpresa.cnpj} onChange={e => setConfigEmpresa({ ...configEmpresa, cnpj: e.target.value })} placeholder="00.000.000/0001-00" />
+          </div>
+          <div>
+            <span style={label}>Email</span>
+            <div style={iconWrap}>
+              <span style={iconAbs}><Mail size={15} /></span>
+              <input style={inputIcon} type="email" value={configEmpresa.email} onChange={e => setConfigEmpresa({ ...configEmpresa, email: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <span style={label}>Telefone</span>
+            <div style={iconWrap}>
+              <span style={iconAbs}><Phone size={15} /></span>
+              <input style={inputIcon} value={configEmpresa.telefone} onChange={e => setConfigEmpresa({ ...configEmpresa, telefone: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={label}>Endereço</span>
+            <div style={iconWrap}>
+              <span style={iconAbs}><MapPin size={15} /></span>
+              <input style={inputIcon} value={configEmpresa.endereco} onChange={e => setConfigEmpresa({ ...configEmpresa, endereco: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={label}>Site</span>
+            <div style={iconWrap}>
+              <span style={iconAbs}><Globe size={15} /></span>
+              <input style={inputIcon} type="url" value={configEmpresa.site} onChange={e => setConfigEmpresa({ ...configEmpresa, site: e.target.value })} />
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+          <button style={btnPrimary} onClick={salvarConfigEmpresa}><Save size={14} /> Salvar Configurações</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ─── Aba Google Calendar ──────────────────────────── */
+  const renderAbaGoogleCalendar = () => {
+    const status = getSyncStatus();
+    const statusColor = status.color === 'green' ? { bg: '#f0fdf4', c: '#15803d' } : status.color === 'blue' ? { bg: '#eff6ff', c: '#1d4ed8' } : status.color === 'red' ? { bg: '#fef2f2', c: '#b91c1c' } : { bg: '#fefce8', c: '#a16207' };
+    return (
       <div>
-        <h3 className="text-lg font-medium text-gray-900">Integração Google Calendar</h3>
-        <p className="text-sm text-gray-600">Configure a sincronização automática com o Google Agenda</p>
-      </div>
-
-      {/* Status da Configuração */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center space-x-3">
-            <Calendar className="h-6 w-6 text-blue-600" />
-            <h4 className="text-lg font-medium text-gray-900">Status da Integração</h4>
-          </div>
-          
-          {(() => {
-            const status = getSyncStatus();
-            return (
-              <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium ${
-                status.color === 'green' ? 'bg-green-100 text-green-800' :
-                status.color === 'blue' ? 'bg-blue-100 text-blue-800' :
-                status.color === 'red' ? 'bg-red-100 text-red-800' :
-                status.color === 'yellow' ? 'bg-yellow-100 text-yellow-800' :
-                'bg-gray-100 text-gray-800'
-              }`}>
-                {status.color === 'green' ? <CheckCircle className="h-4 w-4" /> :
-                 status.color === 'red' ? <AlertCircle className="h-4 w-4" /> :
-                 <Calendar className="h-4 w-4" />}
-                <span>{status.message}</span>
-              </div>
-            );
-          })()}
+        <div style={{ marginBottom: '20px' }}>
+          <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#111827', margin: 0 }}>Integração Google Calendar</h3>
+          <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>Configure a sincronização automática com o Google Agenda</p>
         </div>
 
-        {!isConfigured && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-            <div className="flex items-start space-x-3">
-              <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+        <div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Calendar size={20} color="#2563eb" />
+              <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Status da Integração</span>
+            </div>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: statusColor.bg, color: statusColor.c }}>
+              {status.color === 'green' ? <CheckCircle size={13} /> : <AlertCircle size={13} />} {status.message}
+            </span>
+          </div>
+          {!isConfigured && (
+            <div style={{ background: '#fefce8', border: '1px solid #fde047', borderRadius: '8px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+              <AlertCircle size={16} color="#a16207" style={{ flexShrink: 0, marginTop: '2px' }} />
               <div>
-                <h5 className="text-sm font-medium text-yellow-800">Configuração Necessária</h5>
-                <p className="text-sm text-yellow-700 mt-1">
-                  Para ativar a sincronização automática com o Google Calendar, você precisa configurar as credenciais da API.
-                </p>
+                <div style={{ fontSize: '13px', fontWeight: '600', color: '#92400e' }}>Configuração Necessária</div>
+                <div style={{ fontSize: '12px', color: '#a16207', marginTop: '4px' }}>Configure as credenciais da API para ativar a sincronização automática.</div>
               </div>
             </div>
-          </div>
-        )}
-
-        {isConfigured && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-            <div className="flex items-start space-x-3">
-              <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
-              <div>
-                <h5 className="text-sm font-medium text-green-800">Integração Ativa</h5>
-                <p className="text-sm text-green-700 mt-1">
-                  O Google Calendar está configurado e sincronizando automaticamente com o sistema.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Configuração */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <Key className="h-6 w-6 text-gray-600" />
-          <h4 className="text-lg font-medium text-gray-900">Credenciais da API</h4>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Google API Key *
-            </label>
-            <input
-              type="text"
-              value={googleCalendarConfig.apiKey}
-              onChange={(e) => setGoogleCalendarConfig({
-                ...googleCalendarConfig,
-                apiKey: e.target.value
-              })}
-              placeholder="AIzaSyC..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Obtenha em: Google Cloud Console → APIs & Services → Credentials
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Access Token *
-            </label>
-            <input
-              type="password"
-              value={googleCalendarConfig.accessToken}
-              onChange={(e) => setGoogleCalendarConfig({
-                ...googleCalendarConfig,
-                accessToken: e.target.value
-              })}
-              placeholder="ya29.a0..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Token de acesso OAuth 2.0 para a conta vip@vipmudancas.com.br
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Calendar ID
-            </label>
-            <input
-              type="email"
-              value={googleCalendarConfig.calendarId}
-              onChange={(e) => setGoogleCalendarConfig({
-                ...googleCalendarConfig,
-                calendarId: e.target.value
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Email da conta Google Calendar (padrão: vip@vipmudancas.com.br)
-            </p>
-          </div>
-        </div>
-
-        <div className="flex space-x-3 mt-6">
-          <button
-            onClick={configurarGoogleCalendar}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <Save className="h-4 w-4" />
-            <span>Salvar Configuração</span>
-          </button>
-
+          )}
           {isConfigured && (
-            <button
-              onClick={testarSincronizacao}
-              disabled={isLoading}
-              className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>{isLoading ? 'Testando...' : 'Testar Sincronização'}</span>
-            </button>
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+              <CheckCircle size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: '600', color: '#14532d' }}>Integração Ativa</div>
+                <div style={{ fontSize: '12px', color: '#16a34a', marginTop: '4px' }}>Google Calendar sincronizando automaticamente.</div>
+              </div>
+            </div>
           )}
         </div>
-      </div>
 
-      {/* Instruções */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <AlertCircle className="h-6 w-6 text-blue-600" />
-          <h4 className="text-lg font-medium text-gray-900">Como Configurar</h4>
-        </div>
-
-        <div className="space-y-4 text-sm text-gray-700">
-          <div>
-            <h5 className="font-medium text-gray-900 mb-2">1. Criar Projeto no Google Cloud</h5>
-            <ul className="list-disc list-inside space-y-1 ml-4">
-              <li>Acesse <a href="https://console.cloud.google.com" target="_blank" className="text-blue-600 hover:underline">Google Cloud Console</a></li>
-              <li>Crie um novo projeto ou selecione um existente</li>
-              <li>Ative a API do Google Calendar</li>
-            </ul>
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <Key size={18} color="#6b7280" />
+            <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Credenciais da API</span>
           </div>
-
-          <div>
-            <h5 className="font-medium text-gray-900 mb-2">2. Configurar Credenciais</h5>
-            <ul className="list-disc list-inside space-y-1 ml-4">
-              <li>Vá em "APIs & Services" → "Credentials"</li>
-              <li>Clique em "Create Credentials" → "API Key"</li>
-              <li>Configure OAuth 2.0 para obter o Access Token</li>
-            </ul>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <span style={label}>Google API Key *</span>
+              <input style={input} value={googleCalendarConfig.apiKey} onChange={e => setGoogleCalendarConfig({ ...googleCalendarConfig, apiKey: e.target.value })} placeholder="AIzaSyC..." />
+              <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>Google Cloud Console → APIs & Services → Credentials</p>
+            </div>
+            <div>
+              <span style={label}>Access Token *</span>
+              <input style={input} type="password" value={googleCalendarConfig.accessToken} onChange={e => setGoogleCalendarConfig({ ...googleCalendarConfig, accessToken: e.target.value })} placeholder="ya29.a0..." />
+            </div>
+            <div>
+              <span style={label}>Calendar ID</span>
+              <input style={input} value={googleCalendarConfig.calendarId} onChange={e => setGoogleCalendarConfig({ ...googleCalendarConfig, calendarId: e.target.value })} />
+            </div>
           </div>
-
-          <div>
-            <h5 className="font-medium text-gray-900 mb-2">3. Permissões Necessárias</h5>
-            <ul className="list-disc list-inside space-y-1 ml-4">
-              <li>https://www.googleapis.com/auth/calendar</li>
-              <li>https://www.googleapis.com/auth/calendar.events</li>
-            </ul>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <button style={btnPrimary} onClick={configurarGoogleCalendar}><Save size={14} /> Salvar Configuração</button>
+            {isConfigured && (
+              <button style={btnGreen} onClick={() => syncEvents()} disabled={isLoading}>
+                <RefreshCw size={14} /> {isLoading ? 'Testando...' : 'Testar Sincronização'}
+              </button>
+            )}
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const renderAbaUsuarios = () => (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h3 className="text-lg font-medium text-gray-900">Gestão de Usuários</h3>
-          <p className="text-sm text-gray-600">Gerencie usuários e suas permissões</p>
-        </div>
-        <button
-          onClick={adicionarUsuario}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Novo Usuário</span>
-        </button>
-      </div>
-
-      {/* Estatísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-blue-50 rounded-lg p-4">
-          <div className="flex items-center">
-            <Users className="h-8 w-8 text-blue-600" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-blue-600">Total Usuários</p>
-              <p className="text-2xl font-bold text-blue-900">{usuarios.length}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-green-50 rounded-lg p-4">
-          <div className="flex items-center">
-            <UserCheck className="h-8 w-8 text-green-600" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-green-600">Ativos</p>
-              <p className="text-2xl font-bold text-green-900">
-                {usuarios.filter(u => u.status === 'ativo').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-red-50 rounded-lg p-4">
-          <div className="flex items-center">
-            <UserX className="h-8 w-8 text-red-600" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-red-600">Inativos</p>
-              <p className="text-2xl font-bold text-red-900">
-                {usuarios.filter(u => u.status === 'inativo').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-purple-50 rounded-lg p-4">
-          <div className="flex items-center">
-            <Shield className="h-8 w-8 text-purple-600" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-purple-600">Admins</p>
-              <p className="text-2xl font-bold text-purple-900">
-                {usuarios.filter(u => u.cargo === 'Admin').length}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabela de Usuários */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuário</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cargo</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Permissões</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Último Acesso</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {usuarios.map((usuario) => (
-                <tr key={usuario.id}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0 h-10 w-10">
-                        <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center">
-                          <span className="text-white font-medium">
-                            {usuario.nome.split(' ').map(n => n[0]).join('').substring(0, 2)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{usuario.nome}</div>
-                        <div className="text-sm text-gray-500">{usuario.email}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      usuario.cargo === 'Admin' ? 'bg-purple-100 text-purple-800' :
-                      usuario.cargo === 'Comercial' ? 'bg-blue-100 text-blue-800' :
-                      usuario.cargo === 'Financeiro' ? 'bg-green-100 text-green-800' :
-                      'bg-orange-100 text-orange-800'
-                    }`}>
-                      {usuario.cargo}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{usuario.permissoes.length} permissões</div>
-                    <div className="text-sm text-gray-500">
-                      {usuario.permissoes.slice(0, 2).join(', ')}
-                      {usuario.permissoes.length > 2 && ` +${usuario.permissoes.length - 2}`}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      usuario.status === 'ativo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                    }`}>
-                      {usuario.status === 'ativo' ? 'Ativo' : 'Inativo'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {usuario.ultimoAcesso}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => editarUsuario(usuario)}
-                        className="text-blue-600 hover:text-blue-900"
-                        title="Editar"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => alterarStatusUsuario(usuario.id, usuario.status === 'ativo' ? 'inativo' : 'ativo')}
-                        className={`${usuario.status === 'ativo' ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
-                        title={usuario.status === 'ativo' ? 'Desativar' : 'Ativar'}
-                      >
-                        {usuario.status === 'ativo' ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
-                      </button>
-                      {usuario.cargo !== 'Admin' && (
-                        <button
-                          onClick={() => excluirUsuario(usuario.id)}
-                          className="text-red-600 hover:text-red-900"
-                          title="Excluir"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderAbaEmpresa = () => (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-medium text-gray-900">Informações da Empresa</h3>
-        <p className="text-sm text-gray-600">Configure os dados da sua empresa</p>
-      </div>
-
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Nome da Empresa</label>
-            <div className="relative">
-              <Building2 className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                value={configEmpresa.nome}
-                onChange={(e) => setConfigEmpresa({...configEmpresa, nome: e.target.value})}
-                className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">CNPJ</label>
-            <input
-              type="text"
-              value={configEmpresa.cnpj}
-              onChange={(e) => setConfigEmpresa({...configEmpresa, cnpj: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="email"
-                value={configEmpresa.email}
-                onChange={(e) => setConfigEmpresa({...configEmpresa, email: e.target.value})}
-                className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Telefone</label>
-            <div className="relative">
-              <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                value={configEmpresa.telefone}
-                onChange={(e) => setConfigEmpresa({...configEmpresa, telefone: e.target.value})}
-                className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Endereço</label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                value={configEmpresa.endereco}
-                onChange={(e) => setConfigEmpresa({...configEmpresa, endereco: e.target.value})}
-                className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Site</label>
-            <div className="relative">
-              <Globe className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="url"
-                value={configEmpresa.site}
-                onChange={(e) => setConfigEmpresa({...configEmpresa, site: e.target.value})}
-                className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end mt-6">
-          <button
-            onClick={salvarConfigEmpresa}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <Save className="h-4 w-4" />
-            <span>Salvar Configurações</span>
-          </button>
-        </div>
-      </div>
+  /* ─── Aba Sistema ──────────────────────────────────── */
+  const Toggle = ({ checked, onChange }) => (
+    <div
+      onClick={() => onChange(!checked)}
+      style={{ width: '44px', height: '24px', borderRadius: '12px', background: checked ? '#2563eb' : '#d1d5db', cursor: 'pointer', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}
+    >
+      <div style={{ position: 'absolute', top: '2px', left: checked ? '22px' : '2px', width: '20px', height: '20px', borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s' }} />
     </div>
   );
 
   const renderAbaSistema = () => (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-medium text-gray-900">Configurações do Sistema</h3>
-        <p className="text-sm text-gray-600">Configure integrações e funcionalidades avançadas</p>
+    <div>
+      <div style={{ marginBottom: '20px' }}>
+        <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#111827', margin: 0 }}>Configurações do Sistema</h3>
+        <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>Configure integrações e funcionalidades avançadas</p>
       </div>
 
       {/* IA Mirante */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <Bot className="h-6 w-6 text-purple-600" />
-          <h4 className="text-lg font-medium text-gray-900">IA Mirante</h4>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <Bot size={20} color="#7c3aed" />
+          <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>IA Mirante</span>
         </div>
-        
-        <div className="space-y-4">
-          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-            <div className="flex items-start space-x-2">
-              <Bot className="h-4 w-4 text-purple-600 mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-purple-800">
-                A <strong>Mirante</strong> utiliza o modelo <strong>Claude (Anthropic)</strong>. A chave da API deve ser configurada
-                na variável de ambiente <code className="bg-purple-100 px-1 rounded">ANTHROPIC_API_KEY</code> do servidor backend.
-                O campo abaixo é apenas para referência e testes.
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Chave API Anthropic (Claude)</label>
-            <div className="relative">
-              <Key className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type={mostrarSenha ? 'text' : 'password'}
-                value={configSistema.anthropicApiKey}
-                onChange={(e) => setConfigSistema({...configSistema, anthropicApiKey: e.target.value})}
-                placeholder="sk-ant-api03-..."
-                className="pl-10 pr-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-              <button
-                type="button"
-                onClick={() => setMostrarSenha(!mostrarSenha)}
-                className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-              >
-                {mostrarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Obtenha em: <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-purple-600 hover:underline">console.anthropic.com</a> → API Keys
-            </p>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={testarIA}
-              className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-            >
-              <Bot className="h-4 w-4" />
-              <span>Testar Mirante</span>
+        <div style={{ background: '#f5f3ff', border: '1px solid #c4b5fd', borderRadius: '8px', padding: '10px 14px', display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <Bot size={14} color="#7c3aed" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <p style={{ fontSize: '12px', color: '#5b21b6', margin: 0, lineHeight: '1.5' }}>
+            A <strong>Mirante</strong> usa o modelo <strong>Claude (Anthropic)</strong>. A chave deve ser configurada
+            na variável <code style={{ background: '#ddd6fe', padding: '0 4px', borderRadius: '4px' }}>ANTHROPIC_API_KEY</code> no backend.
+          </p>
+        </div>
+        <div>
+          <span style={label}>Chave API Anthropic (Claude)</span>
+          <div style={{ ...iconWrap, position: 'relative' }}>
+            <span style={iconAbs}><Key size={15} /></span>
+            <input
+              style={{ ...inputIcon, paddingRight: '36px' }}
+              type={mostrarSenha ? 'text' : 'password'}
+              value={configSistema.anthropicApiKey}
+              onChange={e => setConfigSistema({ ...configSistema, anthropicApiKey: e.target.value })}
+              placeholder="sk-ant-api03-..."
+            />
+            <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+              {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
             </button>
-            <span className="text-sm text-blue-600 font-medium">
-              ● Claude · Anthropic
-            </span>
           </div>
+          <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+            Obtenha em: <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: '#7c3aed' }}>console.anthropic.com</a> → API Keys
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '16px' }}>
+          <button style={btnPurple} onClick={testarIA}><Bot size={14} /> Testar Mirante</button>
+          <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: '500' }}>● Claude · Anthropic</span>
         </div>
       </div>
 
-      {/* Integrações */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <Globe className="h-6 w-6 text-blue-600" />
-          <h4 className="text-lg font-medium text-gray-900">Integrações</h4>
+      {/* Webhook */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <Globe size={18} color="#2563eb" />
+          <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Integrações</span>
         </div>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">URL Webhook</label>
-            <input
-              type="url"
-              value={configSistema.urlWebhook}
-              onChange={(e) => setConfigSistema({...configSistema, urlWebhook: e.target.value})}
-              placeholder="https://..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              URL para receber notificações de eventos do sistema
-            </p>
-          </div>
-        </div>
+        <span style={label}>URL Webhook</span>
+        <input style={input} type="url" value={configSistema.urlWebhook} onChange={e => setConfigSistema({ ...configSistema, urlWebhook: e.target.value })} placeholder="https://..." />
+        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>URL para receber notificações de eventos do sistema</p>
       </div>
 
       {/* Notificações */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <Bell className="h-6 w-6 text-yellow-600" />
-          <h4 className="text-lg font-medium text-gray-900">Notificações</h4>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <Bell size={18} color="#d97706" />
+          <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Notificações</span>
         </div>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
+        {[
+          { key: 'emailNotificacoes', label: 'Notificações por Email', desc: 'Receber alertas importantes por email' },
+          { key: 'backupAutomatico', label: 'Backup Automático', desc: 'Backup diário dos dados do sistema' },
+          { key: 'manutencaoAgendada', label: 'Modo Manutenção', desc: 'Ativar para manutenções programadas' },
+        ].map(item => (
+          <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f3f4f6' }}>
             <div>
-              <p className="text-sm font-medium text-gray-900">Notificações por Email</p>
-              <p className="text-xs text-gray-500">Receber alertas importantes por email</p>
+              <div style={{ fontSize: '14px', fontWeight: '500', color: '#111827' }}>{item.label}</div>
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>{item.desc}</div>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={configSistema.emailNotificacoes}
-                onChange={(e) => setConfigSistema({...configSistema, emailNotificacoes: e.target.checked})}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
+            <Toggle checked={configSistema[item.key]} onChange={val => setConfigSistema({ ...configSistema, [item.key]: val })} />
           </div>
+        ))}
+      </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-900">Backup Automático</p>
-              <p className="text-xs text-gray-500">Backup diário dos dados do sistema</p>
+      {/* Info do sistema */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <Database size={18} color="#6b7280" />
+          <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>Informações do Sistema</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          {[
+            { label: 'Versão do Sistema', value: configSistema.versaoSistema },
+            { label: 'Último Backup', value: configSistema.ultimoBackup },
+          ].map((i, idx) => (
+            <div key={idx} style={{ background: '#f9fafb', borderRadius: '8px', padding: '14px' }}>
+              <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>{i.label}</div>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: '#111827', marginTop: '4px' }}>{i.value}</div>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={configSistema.backupAutomatico}
-                onChange={(e) => setConfigSistema({...configSistema, backupAutomatico: e.target.checked})}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-900">Modo Manutenção</p>
-              <p className="text-xs text-gray-500">Ativar para manutenções programadas</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={configSistema.manutencaoAgendada}
-                onChange={(e) => setConfigSistema({...configSistema, manutencaoAgendada: e.target.checked})}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-            </label>
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* Informações do Sistema */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <Database className="h-6 w-6 text-gray-600" />
-          <h4 className="text-lg font-medium text-gray-900">Informações do Sistema</h4>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <p className="text-sm font-medium text-gray-700">Versão do Sistema</p>
-            <p className="text-lg font-bold text-gray-900">{configSistema.versaoSistema}</p>
-          </div>
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <p className="text-sm font-medium text-gray-700">Último Backup</p>
-            <p className="text-lg font-bold text-gray-900">{configSistema.ultimoBackup}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <button
-          onClick={salvarConfigSistema}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <Save className="h-4 w-4" />
-          <span>Salvar Configurações</span>
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button style={btnPrimary} onClick={salvarConfigSistema}><Save size={14} /> Salvar Configurações</button>
       </div>
     </div>
   );
 
+  /* ─── Aba Documentos ───────────────────────────────── */
+  const renderAbaDocumentos = () => <AbaDocumentos />;
+
+  /* ─── Main render ──────────────────────────────────── */
+  const abas = [
+    { id: 'usuarios', label: 'Usuários', icon: <Users size={14} /> },
+    { id: 'empresa', label: 'Empresa', icon: <Building2 size={14} /> },
+    { id: 'documentos', label: 'Documentos', icon: <FileText size={14} /> },
+    { id: 'google-calendar', label: 'Google Calendar', icon: <Calendar size={14} />, extra: isConfigured && <CheckCircle size={11} color="#16a34a" /> },
+    { id: 'sistema', label: 'Sistema', icon: <Settings size={14} /> },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Configurações</h1>
-              <p className="text-gray-600 mt-1">Gerencie usuários, empresa e sistema</p>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Settings className="h-6 w-6 text-gray-400" />
-              <span className="text-sm text-gray-600">Sistema v2.0</span>
-            </div>
+      <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '20px 32px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#111827', margin: 0 }}>Configurações</h1>
+            <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>Gerencie usuários, empresa e sistema</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#6b7280' }}>
+            <Settings size={18} />
+            <span style={{ fontSize: '13px' }}>Sistema v2.0</span>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div style={{ padding: '24px 32px' }}>
         {/* Abas */}
-        <div className="bg-white rounded-lg shadow mb-8">
-          <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8 px-6">
+        <div style={{ background: '#fff', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', marginBottom: '24px' }}>
+          <div style={{ borderBottom: '1px solid #e5e7eb', display: 'flex', padding: '0 24px', gap: '4px' }}>
+            {abas.map(a => (
               <button
-                onClick={() => setAbaAtiva('usuarios')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  abaAtiva === 'usuarios'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                key={a.id}
+                onClick={() => setAbaAtiva(a.id)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '14px 16px', fontSize: '13px', fontWeight: '500',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  borderBottom: `2px solid ${abaAtiva === a.id ? '#2563eb' : 'transparent'}`,
+                  color: abaAtiva === a.id ? '#2563eb' : '#6b7280',
+                  transition: 'color 0.15s',
+                }}
               >
-                <div className="flex items-center space-x-2">
-                  <Users className="h-4 w-4" />
-                  <span>Usuários</span>
-                </div>
+                {a.icon}{a.label}{a.extra}
               </button>
-              <button
-                onClick={() => setAbaAtiva('empresa')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  abaAtiva === 'empresa'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <Building2 className="h-4 w-4" />
-                  <span>Empresa</span>
-                </div>
-              </button>
-              <button
-                onClick={() => setAbaAtiva('google-calendar')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  abaAtiva === 'google-calendar'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4" />
-                  <span>Google Calendar</span>
-                  {isConfigured && <CheckCircle className="h-3 w-3 text-green-500" />}
-                </div>
-              </button>
-              <button
-                onClick={() => setAbaAtiva('sistema')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  abaAtiva === 'sistema'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <Settings className="h-4 w-4" />
-                  <span>Sistema</span>
-                </div>
-              </button>
-            </nav>
+            ))}
           </div>
-
-          <div className="p-6">
+          <div style={{ padding: '24px' }}>
             {abaAtiva === 'usuarios' && renderAbaUsuarios()}
             {abaAtiva === 'empresa' && renderAbaEmpresa()}
+            {abaAtiva === 'documentos' && renderAbaDocumentos()}
             {abaAtiva === 'google-calendar' && renderAbaGoogleCalendar()}
             {abaAtiva === 'sistema' && renderAbaSistema()}
           </div>
@@ -944,86 +904,114 @@ const Configuracoes = () => {
 
       {/* Modal Usuário */}
       {modalUsuario && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '28px', width: '560px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#111827', marginBottom: '20px' }}>
               {usuarioEditando ? 'Editar Usuário' : 'Novo Usuário'}
             </h3>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                  <input
-                    type="text"
-                    defaultValue={usuarioEditando?.nome || ''}
-                    placeholder="Nome completo"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input
-                    type="email"
-                    defaultValue={usuarioEditando?.email || ''}
-                    placeholder="email@vip.com.br"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cargo</label>
-                  <select
-                    defaultValue={usuarioEditando?.cargo || 'Comercial'}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="Admin">Admin</option>
-                    <option value="Comercial">Comercial</option>
-                    <option value="Financeiro">Financeiro</option>
-                    <option value="Operacional">Operacional</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
-                  <input
-                    type="password"
-                    placeholder={usuarioEditando ? 'Deixe em branco para manter' : 'Senha temporária'}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Permissões</label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-md p-3">
-                  {permissoesDisponiveis.map((permissao) => (
-                    <label key={permissao.id} className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        defaultChecked={usuarioEditando?.permissoes.includes(permissao.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-gray-700">{permissao.nome}</span>
-                    </label>
-                  ))}
-                </div>
+                <span style={label}>Nome *</span>
+                <input ref={el => formRef.current.nome = el} style={input} type="text" defaultValue={usuarioEditando?.nome || ''} placeholder="Nome completo" />
+              </div>
+              <div>
+                <span style={label}>Email *</span>
+                <input ref={el => formRef.current.email = el} style={input} type="email" defaultValue={usuarioEditando?.email || ''} placeholder="email@legacy.com.br" />
+              </div>
+              <div>
+                <span style={label}>Cargo / Role</span>
+                <select ref={el => formRef.current.cargo = el} style={input} defaultValue={usuarioEditando?.cargo || 'vendedor'}>
+                  <option value="admin">Admin</option>
+                  <option value="vendedor">Vendedor / Comercial</option>
+                  <option value="financeiro">Financeiro</option>
+                  <option value="operacional">Operacional</option>
+                </select>
+              </div>
+              <div>
+                <span style={label}>Senha {usuarioEditando ? '(deixe em branco para manter)' : '*'}</span>
+                <input ref={el => formRef.current.senha = el} style={input} type="password" placeholder={usuarioEditando ? 'Deixe em branco para manter' : 'Senha obrigatória'} />
               </div>
             </div>
-
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setModalUsuario(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300"
-              >
-                Cancelar
+            <div>
+              <span style={label}>Permissões</span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', maxHeight: '160px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
+                {permissoesDisponiveis.map(p => (
+                  <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                    <input type="checkbox" defaultChecked={usuarioEditando?.permissoes?.includes(p.id)} style={{ cursor: 'pointer' }} />
+                    {p.nome}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+              <button style={btnGray} onClick={() => setModalUsuario(false)}>Cancelar</button>
+              <button style={{ ...btnPrimary, opacity: salvendoUsuario ? 0.7 : 1 }} onClick={salvarUsuario} disabled={salvendoUsuario}>
+                {salvendoUsuario ? 'Salvando...' : (usuarioEditando ? 'Atualizar' : 'Criar Usuário')}
               </button>
-              <button
-                onClick={salvarUsuario}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                {usuarioEditando ? 'Atualizar' : 'Criar'} Usuário
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Matriz de Permissões */}
+      {modalPermissoes && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '0', width: '700px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#111827' }}>Permissões Granulares</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#6b7280' }}>{modalPermissoes.nome} · {modalPermissoes.cargo}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={resetToRoleDefaults} style={{ ...btnGray, fontSize: '12px', padding: '6px 12px' }}>
+                  Resetar para defaults do role
+                </button>
+                <button onClick={() => setModalPermissoes(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>✕</button>
+              </div>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              <div style={{ padding: '16px 24px', background: '#fef3c7', borderBottom: '1px solid #fde68a', fontSize: '12px', color: '#92400e' }}>
+                💡 Deixe vazio para usar as permissões padrão do role ({modalPermissoes.cargo}). Configure apenas quando precisar personalizar.
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}>
+                    <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: '600', color: '#374151', width: '200px' }}>Módulo</th>
+                    {ACOES_PERM.map(a => (
+                      <th key={a} style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>{a}</th>
+                    ))}
+                    <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>Todos</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>Nenhum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {MODULOS_PERM.map((mod, idx) => (
+                    <tr key={mod.id} style={{ borderTop: '1px solid #f3f4f6', background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                      <td style={{ padding: '10px 16px', fontWeight: '500', color: '#374151' }}>{mod.label}</td>
+                      {ACOES_PERM.map(acao => (
+                        <td key={acao} style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          <input type="checkbox"
+                            checked={!!permMatriz[mod.id]?.[acao]}
+                            onChange={() => togglePerm(mod.id, acao)}
+                            style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#7c3aed' }}
+                          />
+                        </td>
+                      ))}
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                        <button onClick={() => setAllModuloPerm(mod.id, true)} style={{ padding: '2px 8px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', color: '#15803d', fontWeight: '600' }}>✓</button>
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                        <button onClick={() => setAllModuloPerm(mod.id, false)} style={{ padding: '2px 8px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', color: '#dc2626', fontWeight: '600' }}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button style={btnGray} onClick={() => setModalPermissoes(null)}>Cancelar</button>
+              <button style={{ ...btnPrimary, background: '#7c3aed', opacity: salvendoPerm ? 0.7 : 1 }} onClick={salvarPermissoes} disabled={salvendoPerm}>
+                <Shield size={14} /> {salvendoPerm ? 'Salvando...' : 'Salvar Permissões'}
               </button>
             </div>
           </div>
@@ -1034,4 +1022,3 @@ const Configuracoes = () => {
 };
 
 export default Configuracoes;
-

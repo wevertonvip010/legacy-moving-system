@@ -29,6 +29,8 @@ from database_real import (
     GuardaMovel, Recibo, Despesa, Meta,
     EtapaOperacional, FechamentoOperacional, Comissao,
     Avaria, UserActivityLog,
+    Material, BoxEvento, AuditLog, Jornada, Turno,
+    RecorrenteFinanceiro, ConfigSistema,
     init_db
 )
 
@@ -76,10 +78,22 @@ def require_role(*roles):
 
 
 def _user_dict(u):
-    return {"id": u.id, "name": u.name, "cpf": u.cpf, "role": u.role, "email": u.email}
+    import json as _json
+    perm_raw = getattr(u, 'permissoes', None)
+    try:
+        permissoes = _json.loads(perm_raw) if perm_raw else None
+    except Exception:
+        permissoes = None
+    return {
+        "id": u.id, "name": u.name, "cpf": u.cpf, "role": u.role, "email": u.email,
+        "telefone": getattr(u, 'telefone', None),
+        "ativo": getattr(u, 'ativo', True),
+        "permissoes": permissoes,
+    }
 
 
 def _lead_dict(l):
+    vendedor = User.query.get(l.vendedor_id) if l.vendedor_id else None
     return {
         "id": l.id, "nome": l.nome, "telefone": l.telefone, "email": l.email,
         "origem": l.origem, "tipo_servico": l.tipo_servico,
@@ -87,7 +101,8 @@ def _lead_dict(l):
         "bairro_destino": l.bairro_destino, "cidade_destino": l.cidade_destino,
         "observacoes": l.observacoes, "classificacao": l.classificacao,
         "classificacao_justificativa": l.classificacao_justificativa,
-        "vendedor_id": l.vendedor_id, "organizer_id": l.organizer_id,
+        "vendedor_id": l.vendedor_id, "vendedor_nome": vendedor.name if vendedor else None,
+        "organizer_id": l.organizer_id,
         "status": l.status, "orcamento_id": l.orcamento_id,
         "created_at": l.created_at.isoformat() if l.created_at else None,
     }
@@ -197,11 +212,44 @@ def _recibo_dict(r):
     }
 
 
-def _estoque_dict(e):
+def _material_dict(m):
     return {
-        "id": e.id, "material": e.material, "unidade": e.unidade,
+        "id": m.id, "nome": m.nome, "categoria": m.categoria,
+        "unidade": m.unidade, "custo_unitario": m.custo_unitario,
+        "quantidade_minima": m.quantidade_minima,
+        "quantidade_critica": m.quantidade_critica,
+        "descricao": m.descricao, "ativo": m.ativo,
+        "fornecedor": getattr(m, 'fornecedor', None),
+        "lote": getattr(m, 'lote', None),
+        "data_compra": m.data_compra.isoformat() if getattr(m, 'data_compra', None) else None,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+    }
+
+
+def _box_evento_dict(e):
+    return {
+        "id": e.id, "box_id": e.box_id, "tipo": e.tipo,
+        "cliente_id": e.cliente_id, "cliente_nome": e.cliente_nome,
+        "user_id": e.user_id,
+        "data_evento": e.data_evento.isoformat() if e.data_evento else None,
+        "contrato_referencia": e.contrato_referencia,
+        "valor_mensal": e.valor_mensal, "observacoes": e.observacoes,
+    }
+
+
+def _estoque_dict(e):
+    mat = Material.query.get(e.material_id) if getattr(e, 'material_id', None) else None
+    return {
+        "id": e.id,
+        "material_id": getattr(e, 'material_id', None),
+        "material": e.material,
+        "material_nome": mat.nome if mat else e.material,
+        "categoria": mat.categoria if mat else None,
+        "unidade": e.unidade or (mat.unidade if mat else None),
         "quantidade": e.quantidade, "estoque_minimo": e.estoque_minimo,
         "estoque_critico": e.estoque_critico, "valor_unitario": e.valor_unitario,
+        "localizacao": getattr(e, 'localizacao', None),
         "alerta": e.alerta,
         "created_at": e.created_at.isoformat() if e.created_at else None,
     }
@@ -214,6 +262,8 @@ def _box_dict(b):
         "valor_mensal": b.valor_mensal,
         "metros_quadrados": b.metros_quadrados,
         "metros_cubicos": b.metros_cubicos,
+        "localizacao": getattr(b, 'localizacao', None),
+        "contrato_referencia": getattr(b, 'contrato_referencia', None),
         "data_entrada": b.data_entrada.isoformat() if b.data_entrada else None,
         "data_saida_prevista": b.data_saida_prevista.isoformat() if b.data_saida_prevista else None,
         "observacoes": b.observacoes,
@@ -388,9 +438,16 @@ def me():
 
 # ── USUÁRIOS ─────────────────────────────────────────────────────────────────
 @app.route('/api/usuarios', methods=['GET'])
-@require_role('admin')
+@jwt_required()
 def listar_usuarios():
-    return jsonify([_user_dict(u) for u in User.query.all()])
+    role_f = request.args.get('role', '')
+    q = User.query
+    if role_f:
+        q = q.filter_by(role=role_f)
+    ativo_f = request.args.get('ativo', '')
+    if ativo_f == '1':
+        q = q.filter(User.ativo == True)  # noqa: E712
+    return jsonify([_user_dict(u) for u in q.order_by(User.name).all()])
 
 
 @app.route('/api/usuarios', methods=['POST'])
@@ -404,10 +461,60 @@ def criar_usuario():
         return err("CPF já cadastrado")
     u = User(cpf=cpf, password=generate_password_hash(data['password']),
              name=data['name'], email=data.get('email', ''),
-             role=data.get('role', 'vendedor'))
+             role=data.get('role', 'comercial'),
+             telefone=data.get('telefone', ''),
+             ativo=data.get('ativo', True))
     db.session.add(u)
+    db.session.flush()
+    registrar_audit(current_user(), 'criar', 'usuario', u.id, f'Usuário criado: {u.name}')
     db.session.commit()
     return jsonify(_user_dict(u)), 201
+
+
+@app.route('/api/usuarios/<int:id>', methods=['PUT'])
+@require_role('admin')
+def atualizar_usuario(id):
+    import json as _json
+    u = User.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['name', 'email', 'role', 'telefone']:
+        if f in data:
+            setattr(u, f, data[f])
+    if 'ativo' in data:
+        u.ativo = bool(data['ativo'])
+    if data.get('password'):
+        u.password = generate_password_hash(data['password'])
+    if 'permissoes' in data:
+        u.permissoes = _json.dumps(data['permissoes']) if data['permissoes'] else None
+    registrar_audit(current_user(), 'atualizar', 'usuario', id,
+                    f'Usuário atualizado: {u.name}', dados_novos={k: v for k, v in data.items() if k != 'password'})
+    db.session.commit()
+    return jsonify(_user_dict(u))
+
+
+@app.route('/api/usuarios/<int:id>/permissoes', methods=['GET'])
+@jwt_required()
+def get_permissoes_usuario(id):
+    import json as _json
+    u = User.query.get_or_404(id)
+    perm_raw = getattr(u, 'permissoes', None)
+    try:
+        permissoes = _json.loads(perm_raw) if perm_raw else None
+    except Exception:
+        permissoes = None
+    return jsonify(permissoes)
+
+
+@app.route('/api/usuarios/<int:id>/permissoes', methods=['PUT'])
+@require_role('admin')
+def set_permissoes_usuario(id):
+    import json as _json
+    u = User.query.get_or_404(id)
+    data = request.json
+    u.permissoes = _json.dumps(data) if data is not None else None
+    registrar_audit(current_user(), 'permissoes', 'usuario', id, f'Permissões atualizadas: {u.name}')
+    db.session.commit()
+    return jsonify({"status": "ok"})
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -756,6 +863,7 @@ def obter_cliente(id):
     con_list = Contrato.query.filter_by(cliente_id=id).all()
     os_list = OrdemServico.query.filter_by(cliente_id=id).all()
     rec_list = Recibo.query.filter_by(cliente_id=id).all()
+    av_list = Avaria.query.filter_by(cliente_id=id).order_by(Avaria.created_at.desc()).all()
     valor_total = sum(r.valor_cobrado for r in rec_list if r.status == 'recebido')
     d = _cliente_dict(c)
     d.update({
@@ -763,6 +871,7 @@ def obter_cliente(id):
         "contratos": [_contrato_dict(ct) for ct in con_list],
         "ordens_servico": [_os_dict(o) for o in os_list],
         "recibos": [_recibo_dict(r) for r in rec_list],
+        "avarias": [_avaria_dict(av) for av in av_list],
         "valor_total_gasto": valor_total,
     })
     return jsonify(d)
@@ -814,6 +923,7 @@ def historico_cliente(id):
     orcamentos = Orcamento.query.filter_by(cliente_id=id).order_by(Orcamento.created_at.desc()).all()
     contratos = Contrato.query.filter_by(cliente_id=id).order_by(Contrato.created_at.desc()).all() if hasattr(Contrato, 'cliente_id') else []
     recibos = Recibo.query.filter_by(cliente_id=id).order_by(Recibo.created_at.desc()).all()
+    av_list = Avaria.query.filter_by(cliente_id=id).order_by(Avaria.created_at.desc()).all()
     return jsonify({
         "cliente": _cliente_dict(c),
         "ordens_servico": [_os_dict(o) for o in os_list],
@@ -827,6 +937,7 @@ def historico_cliente(id):
             "data_recebimento": r.data_recebimento.isoformat() if r.data_recebimento else None,
             "forma_pagamento": r.forma_pagamento,
         } for r in recibos],
+        "avarias": [_avaria_dict(av) for av in av_list],
     })
 
 
@@ -892,6 +1003,52 @@ def listar_organizers():
     result = [_org_stats(o) for o in orgs]
     result.sort(key=lambda x: x['receita_gerada'], reverse=True)
     return jsonify(result)
+
+
+@app.route('/api/vendedores/ranking', methods=['GET'])
+@jwt_required()
+def ranking_vendedores():
+    """Ranking de performance dos vendedores (usuários com role vendedor ou admin)."""
+    from sqlalchemy import func
+    vendedores = User.query.filter(User.role.in_(['admin', 'vendedor']), User.ativo == True).all()  # noqa: E712
+    stats = []
+    for v in vendedores:
+        leads_total = Lead.query.filter_by(vendedor_id=v.id).count()
+        leads_conv = Lead.query.filter_by(vendedor_id=v.id, status='convertido').count()
+        # OS via orçamentos dos leads convertidos → orcamento.cliente_id → OS.cliente_id
+        conv_leads = Lead.query.filter_by(vendedor_id=v.id, status='convertido').all()
+        orc_cliente_ids = set()
+        for lx in conv_leads:
+            if lx.orcamento_id:
+                orc = Orcamento.query.get(lx.orcamento_id)
+                if orc and orc.cliente_id:
+                    orc_cliente_ids.add(orc.cliente_id)
+        orc_cliente_ids = list(orc_cliente_ids)
+        os_total = OrdemServico.query.filter(OrdemServico.cliente_id.in_(orc_cliente_ids)).count() if orc_cliente_ids else 0
+        os_finalizadas = OrdemServico.query.filter(
+            OrdemServico.cliente_id.in_(orc_cliente_ids),
+            OrdemServico.status.in_(['concluida', 'finalizada'])
+        ).count() if orc_cliente_ids else 0
+        receita = db.session.query(func.sum(OrdemServico.valor_total)).filter(
+            OrdemServico.cliente_id.in_(orc_cliente_ids)
+        ).scalar() if orc_cliente_ids else 0
+        receita = receita or 0
+        taxa_conv = round((leads_conv / leads_total * 100), 1) if leads_total > 0 else 0.0
+        stats.append({
+            "id": v.id,
+            "nome": v.name,
+            "role": v.role,
+            "leads_total": leads_total,
+            "leads_convertidos": leads_conv,
+            "os_total": os_total,
+            "os_finalizadas": os_finalizadas,
+            "receita_gerada": float(receita),
+            "taxa_conversao": taxa_conv,
+        })
+    stats.sort(key=lambda x: x['receita_gerada'], reverse=True)
+    for i, s in enumerate(stats):
+        s['posicao'] = i + 1
+    return jsonify(stats)
 
 
 @app.route('/api/organizers/ranking', methods=['GET'])
@@ -1346,7 +1503,7 @@ def atualizar_os(id):
     for f in ['motorista', 'veiculo', 'equipe', 'hora_inicio', 'hora_fim_estimada',
               'hora_inicio_real', 'hora_fim_real', 'quantidade_ajudantes', 'quantidade_dias',
               'materiais_previstos', 'materiais_usados', 'checklist', 'observacoes_operacionais',
-              'ocorrencias', 'observacoes_finais']:
+              'ocorrencias', 'observacoes_finais', 'status']:
         if f in data:
             setattr(os_, f, data[f])
     if 'valor_total' in data:
@@ -1718,7 +1875,7 @@ def listar_programacao():
 
 
 @app.route('/api/programacao/sync', methods=['POST'])
-@require_role('admin', 'operacional')
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
 def sync_programacao():
     """Sincroniza todas as OS com data_mudanca para a tabela de programação."""
     os_list = OrdemServico.query.filter(
@@ -1734,7 +1891,7 @@ def sync_programacao():
 
 
 @app.route('/api/programacao', methods=['POST'])
-@require_role('admin', 'operacional')
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
 def criar_programacao():
     data = request.json or {}
     if not data.get('cliente'):
@@ -1758,7 +1915,7 @@ def criar_programacao():
 
 
 @app.route('/api/programacao/<int:id>', methods=['PUT'])
-@require_role('admin', 'operacional')
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
 def atualizar_programacao(id):
     p = Programacao.query.get_or_404(id)
     data = request.json or {}
@@ -1872,11 +2029,58 @@ def saida_estoque(id):
 def movimentacoes_estoque(id):
     Estoque.query.get_or_404(id)
     movs = MovimentacaoEstoque.query.filter_by(estoque_id=id).order_by(MovimentacaoEstoque.created_at.desc()).all()
-    return jsonify([{
-        "id": m.id, "tipo": m.tipo, "quantidade": m.quantidade,
-        "os_id": m.os_id, "observacao": m.observacao,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-    } for m in movs])
+    result = []
+    for m in movs:
+        user_nome = None
+        if m.user_id:
+            u = User.query.get(m.user_id)
+            if u: user_nome = u.nome
+        os_numero = None
+        if m.os_id:
+            o = OrdemServico.query.get(m.os_id)
+            if o: os_numero = o.numero
+        result.append({
+            "id": m.id, "tipo": m.tipo, "quantidade": m.quantidade,
+            "quantidade_anterior": m.quantidade_anterior,
+            "quantidade_posterior": m.quantidade_posterior,
+            "valor_unitario": m.valor_unitario, "valor_total": m.valor_total,
+            "os_id": m.os_id, "os_numero": os_numero,
+            "user_id": m.user_id, "user_nome": user_nome,
+            "observacao": m.observacao,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        })
+    return jsonify(result)
+
+
+@app.route('/api/estoque/movimentacoes/recentes', methods=['GET'])
+@jwt_required()
+def movimentacoes_recentes():
+    """Retorna as últimas 100 movimentações de todos os itens."""
+    movs = MovimentacaoEstoque.query.order_by(MovimentacaoEstoque.created_at.desc()).limit(100).all()
+    result = []
+    for m in movs:
+        e = Estoque.query.get(m.estoque_id) if m.estoque_id else None
+        user_nome = None
+        if m.user_id:
+            u = User.query.get(m.user_id)
+            if u: user_nome = u.nome
+        os_numero = None
+        if m.os_id:
+            o = OrdemServico.query.get(m.os_id)
+            if o: os_numero = o.numero
+        result.append({
+            "id": m.id,
+            "material_nome": e.material_nome if e else '—',
+            "tipo": m.tipo, "quantidade": m.quantidade,
+            "quantidade_anterior": m.quantidade_anterior,
+            "quantidade_posterior": m.quantidade_posterior,
+            "valor_unitario": m.valor_unitario, "valor_total": m.valor_total,
+            "os_id": m.os_id, "os_numero": os_numero,
+            "user_id": m.user_id, "user_nome": user_nome,
+            "observacao": m.observacao,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        })
+    return jsonify(result)
 
 
 # ── GUARDA-MÓVEIS ─────────────────────────────────────────────────────────────
@@ -2056,19 +2260,115 @@ def deletar_avaria(id):
 @app.route('/api/avarias/resumo', methods=['GET'])
 @jwt_required()
 def resumo_avarias():
+    from sqlalchemy import func
     total = Avaria.query.count()
     abertas = Avaria.query.filter_by(status='aberta').count()
     em_analise = Avaria.query.filter_by(status='em_analise').count()
     resolvidas = Avaria.query.filter_by(status='resolvida').count() + Avaria.query.filter_by(status='encerrada').count()
-    valor_total = db.session.query(db.func.sum(Avaria.valor_estimado)).scalar() or 0
-    # Avarias por tipo
-    from sqlalchemy import func
+    valor_total = db.session.query(func.sum(Avaria.valor_estimado)).scalar() or 0
+
+    # Por tipo
     por_tipo = db.session.query(Avaria.tipo, func.count(Avaria.id)).group_by(Avaria.tipo).all()
+
+    # Por equipe (top 10)
+    por_equipe_raw = db.session.query(
+        Avaria.equipe, func.count(Avaria.id).label('count')
+    ).filter(Avaria.equipe != None, Avaria.equipe != '').group_by(Avaria.equipe).order_by(
+        func.count(Avaria.id).desc()
+    ).limit(10).all()
+    por_equipe = {e: c for e, c in por_equipe_raw if e}
+
+    # Mensal (últimos 12 meses)
+    now = datetime.utcnow()
+    mensal = []
+    for i in range(11, -1, -1):
+        if now.month - i <= 0:
+            m = now.month - i + 12
+            a = now.year - 1
+        else:
+            m = now.month - i
+            a = now.year
+        cnt = Avaria.query.filter(
+            extract('month', Avaria.created_at) == m,
+            extract('year', Avaria.created_at) == a
+        ).count()
+        val = db.session.query(func.sum(Avaria.valor_estimado)).filter(
+            extract('month', Avaria.created_at) == m,
+            extract('year', Avaria.created_at) == a
+        ).scalar() or 0
+        label = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m-1]}/{str(a)[2:]}"
+        mensal.append({"mes": m, "ano": a, "label": label, "total": cnt, "valor": float(val)})
+
+    # Tempo médio de resolução (em dias)
+    resolvidas_com_data = Avaria.query.filter(
+        Avaria.data_resolucao != None,
+        Avaria.created_at != None
+    ).all()
+    if resolvidas_com_data:
+        dias = [(a.data_resolucao - a.created_at).days for a in resolvidas_com_data if a.data_resolucao and a.created_at]
+        tempo_medio_resolucao = round(sum(dias) / len(dias), 1) if dias else 0
+    else:
+        tempo_medio_resolucao = 0
+
     return jsonify({
         "total": total, "abertas": abertas, "em_analise": em_analise,
         "resolvidas": resolvidas, "valor_total_estimado": float(valor_total),
         "por_tipo": {t: c for t, c in por_tipo},
+        "por_equipe": por_equipe,
+        "mensal": mensal,
+        "tempo_medio_resolucao": tempo_medio_resolucao,
     })
+
+
+# ── CONFIGURAÇÕES DO SISTEMA ─────────────────────────────────────────────────
+@app.route('/api/config', methods=['GET'])
+@jwt_required()
+def get_config():
+    """Retorna todas as configurações do sistema como dicionário."""
+    configs = ConfigSistema.query.all()
+    result = {}
+    for c in configs:
+        try:
+            import json
+            result[c.chave] = json.loads(c.valor) if c.valor and c.valor.startswith('{') else c.valor
+        except Exception:
+            result[c.chave] = c.valor
+    return jsonify(result)
+
+
+@app.route('/api/config', methods=['PUT'])
+@require_role('admin')
+def set_config():
+    """Salva/atualiza múltiplas configurações de uma vez."""
+    import json as json_mod
+    data = request.json or {}
+    for chave, valor in data.items():
+        if not chave:
+            continue
+        valor_str = json_mod.dumps(valor) if isinstance(valor, (dict, list)) else str(valor)
+        c = ConfigSistema.query.filter_by(chave=chave).first()
+        if c:
+            c.valor = valor_str
+            c.updated_at = datetime.utcnow()
+        else:
+            c = ConfigSistema(chave=chave, valor=valor_str)
+            db.session.add(c)
+    db.session.commit()
+    return jsonify({"status": "ok"})
+
+
+@app.route('/api/config/<chave>', methods=['GET'])
+@jwt_required()
+def get_config_key(chave):
+    c = ConfigSistema.query.filter_by(chave=chave).first()
+    if not c:
+        return jsonify(None)
+    try:
+        import json
+        val = json.loads(c.valor) if c.valor and (c.valor.startswith('{') or c.valor.startswith('[')) else c.valor
+    except Exception:
+        val = c.valor
+    return jsonify(val)
 
 
 # ── ADMIN / CONTROLADORIA ─────────────────────────────────────────────────────
@@ -2309,6 +2609,7 @@ def listar_despesas():
     despesas = query.order_by(Despesa.data.desc()).all()
     return jsonify([{"id": d.id, "categoria": d.categoria, "descricao": d.descricao,
                      "valor": d.valor, "os_id": d.os_id,
+                     "comprovante_url": d.comprovante_url,
                      "data": d.data.isoformat() if d.data else None} for d in despesas])
 
 
@@ -2326,7 +2627,8 @@ def criar_despesa():
             pass
     d = Despesa(
         categoria=data['categoria'], descricao=data.get('descricao', ''),
-        valor=float(data['valor']), data=dt, os_id=data.get('os_id')
+        valor=float(data['valor']), data=dt, os_id=data.get('os_id'),
+        comprovante_url=data.get('comprovante_url', '')
     )
     db.session.add(d)
     db.session.commit()
@@ -2338,7 +2640,7 @@ def criar_despesa():
 def atualizar_despesa(id):
     d = Despesa.query.get_or_404(id)
     data = request.json or {}
-    for f in ['categoria', 'descricao', 'valor', 'os_id']:
+    for f in ['categoria', 'descricao', 'valor', 'os_id', 'comprovante_url']:
         if f in data:
             setattr(d, f, data[f])
     if data.get('data'):
@@ -2350,7 +2652,8 @@ def atualizar_despesa(id):
         d.valor = float(data['valor'])
     db.session.commit()
     return jsonify({"id": d.id, "categoria": d.categoria, "descricao": d.descricao,
-                    "valor": d.valor, "data": d.data.isoformat() if d.data else None})
+                    "valor": d.valor, "comprovante_url": d.comprovante_url,
+                    "data": d.data.isoformat() if d.data else None})
 
 
 @app.route('/api/financeiro/despesas/<int:id>', methods=['DELETE'])
@@ -2400,6 +2703,65 @@ def financeiro_historico():
             "mudancas": mudancas_count,
         })
     return jsonify(meses)
+
+
+# ── RECORRENTES FINANCEIROS ───────────────────────────────────────────────────
+@app.route('/api/financeiro/recorrentes', methods=['GET'])
+@require_role('admin', 'financeiro')
+def listar_recorrentes():
+    items = RecorrenteFinanceiro.query.order_by(RecorrenteFinanceiro.tipo, RecorrenteFinanceiro.descricao).all()
+    return jsonify([{
+        "id": r.id, "tipo": r.tipo, "categoria": r.categoria,
+        "descricao": r.descricao, "valor": r.valor,
+        "dia_vencimento": r.dia_vencimento, "ativo": r.ativo,
+        "observacoes": r.observacoes,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in items])
+
+
+@app.route('/api/financeiro/recorrentes', methods=['POST'])
+@require_role('admin', 'financeiro')
+def criar_recorrente():
+    data = request.json or {}
+    if not data.get('descricao') or not data.get('categoria'):
+        return err("Descrição e categoria são obrigatórias")
+    r = RecorrenteFinanceiro(
+        tipo=data.get('tipo', 'despesa'),
+        categoria=data['categoria'],
+        descricao=data['descricao'],
+        valor=float(data.get('valor', 0)),
+        dia_vencimento=int(data.get('dia_vencimento', 1)),
+        ativo=bool(data.get('ativo', True)),
+        observacoes=data.get('observacoes', ''),
+    )
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({"id": r.id, "descricao": r.descricao}), 201
+
+
+@app.route('/api/financeiro/recorrentes/<int:id>', methods=['PUT'])
+@require_role('admin', 'financeiro')
+def atualizar_recorrente(id):
+    r = RecorrenteFinanceiro.query.get_or_404(id)
+    data = request.json or {}
+    for f in ['tipo', 'categoria', 'descricao', 'dia_vencimento', 'observacoes']:
+        if f in data:
+            setattr(r, f, data[f])
+    if 'valor' in data:
+        r.valor = float(data['valor'])
+    if 'ativo' in data:
+        r.ativo = bool(data['ativo'])
+    db.session.commit()
+    return jsonify({"id": r.id, "descricao": r.descricao})
+
+
+@app.route('/api/financeiro/recorrentes/<int:id>', methods=['DELETE'])
+@require_role('admin', 'financeiro')
+def deletar_recorrente(id):
+    r = RecorrenteFinanceiro.query.get_or_404(id)
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 # ── FECHAMENTO ────────────────────────────────────────────────────────────────
@@ -2518,6 +2880,383 @@ def deletar_meta(id):
     db.session.delete(m)
     db.session.commit()
     return jsonify({"status": "deletado"})
+
+
+# ── AUDIT LOG HELPER ─────────────────────────────────────────────────────────
+def registrar_audit(user, acao, entidade, entidade_id=None, descricao='',
+                    dados_anteriores=None, dados_novos=None):
+    try:
+        log = AuditLog(
+            user_id=user.id if user else None,
+            user_nome=user.name if user else 'Sistema',
+            acao=acao,
+            entidade=entidade,
+            entidade_id=str(entidade_id) if entidade_id else None,
+            descricao=descricao,
+            dados_anteriores=json.dumps(dados_anteriores, ensure_ascii=False) if dados_anteriores else None,
+            dados_novos=json.dumps(dados_novos, ensure_ascii=False) if dados_novos else None,
+            ip=request.remote_addr,
+            user_agent=request.headers.get('User-Agent', '')[:255],
+        )
+        db.session.add(log)
+        # não commita aqui — será commitado junto com a operação principal
+    except Exception as e:
+        logger.warning(f"Audit log error: {e}")
+
+
+# ── MATERIAIS ─────────────────────────────────────────────────────────────────
+@app.route('/api/materiais', methods=['GET'])
+@jwt_required()
+def listar_materiais():
+    q = request.args.get('q', '')
+    categoria = request.args.get('categoria', '')
+    ativo = request.args.get('ativo', '')
+    query = Material.query
+    if q:
+        query = query.filter(Material.nome.ilike(f'%{q}%'))
+    if categoria:
+        query = query.filter_by(categoria=categoria)
+    if ativo == '1':
+        query = query.filter(Material.ativo == True)  # noqa: E712
+    elif ativo == '0':
+        query = query.filter(Material.ativo == False)  # noqa: E712
+    mats = query.order_by(Material.categoria, Material.nome).all()
+    return jsonify([_material_dict(m) for m in mats])
+
+
+@app.route('/api/materiais/<int:id>', methods=['GET'])
+@jwt_required()
+def obter_material(id):
+    m = Material.query.get_or_404(id)
+    d = _material_dict(m)
+    # Posição de estoque associada
+    estoque = Estoque.query.filter_by(material_id=id).first()
+    d['estoque'] = _estoque_dict(estoque) if estoque else None
+    return jsonify(d)
+
+
+@app.route('/api/materiais', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_material():
+    data = request.json or {}
+    if not data.get('nome'):
+        return err("nome é obrigatório")
+    from datetime import date as date_type
+    dc = data.get('data_compra')
+    data_compra_obj = None
+    if dc:
+        try: data_compra_obj = date_type.fromisoformat(dc)
+        except: pass
+    m = Material(
+        nome=data['nome'],
+        categoria=data.get('categoria', 'outros'),
+        unidade=data.get('unidade', 'un'),
+        custo_unitario=float(data.get('custo_unitario', 0)),
+        quantidade_minima=float(data.get('quantidade_minima', 0)),
+        quantidade_critica=float(data.get('quantidade_critica', 0)),
+        descricao=data.get('descricao', ''),
+        ativo=data.get('ativo', True),
+        fornecedor=data.get('fornecedor', ''),
+        lote=data.get('lote', ''),
+        data_compra=data_compra_obj,
+    )
+    db.session.add(m)
+    db.session.flush()
+    u = current_user()
+    registrar_audit(u, 'criar', 'material', m.id, f'Material criado: {m.nome}', dados_novos=data)
+    db.session.commit()
+    return jsonify(_material_dict(m)), 201
+
+
+@app.route('/api/materiais/<int:id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_material(id):
+    m = Material.query.get_or_404(id)
+    data = request.json or {}
+    antes = _material_dict(m)
+    for f in ['nome', 'categoria', 'unidade', 'descricao', 'ativo', 'fornecedor', 'lote']:
+        if f in data:
+            setattr(m, f, data[f])
+    if 'custo_unitario' in data:
+        m.custo_unitario = float(data['custo_unitario'])
+    if 'quantidade_minima' in data:
+        m.quantidade_minima = float(data['quantidade_minima'])
+    if 'quantidade_critica' in data:
+        m.quantidade_critica = float(data['quantidade_critica'])
+    if 'data_compra' in data and data['data_compra']:
+        from datetime import date as date_type
+        try: m.data_compra = date_type.fromisoformat(data['data_compra'])
+        except: pass
+    m.updated_at = datetime.utcnow()
+    registrar_audit(current_user(), 'atualizar', 'material', m.id,
+                    f'Material atualizado: {m.nome}', dados_anteriores=antes, dados_novos=data)
+    db.session.commit()
+    return jsonify(_material_dict(m))
+
+
+@app.route('/api/materiais/<int:id>', methods=['DELETE'])
+@require_role('admin')
+def deletar_material(id):
+    m = Material.query.get_or_404(id)
+    m.ativo = False
+    m.updated_at = datetime.utcnow()
+    registrar_audit(current_user(), 'desativar', 'material', m.id, f'Material desativado: {m.nome}')
+    db.session.commit()
+    return jsonify({"status": "desativado"})
+
+
+@app.route('/api/materiais/categorias', methods=['GET'])
+@jwt_required()
+def listar_categorias_material():
+    from sqlalchemy import distinct
+    cats = db.session.query(distinct(Material.categoria)).order_by(Material.categoria).all()
+    return jsonify([c[0] for c in cats if c[0]])
+
+
+# ── GUARDA-MÓVEIS — HISTÓRICO DE EVENTOS ─────────────────────────────────────
+@app.route('/api/guarda-moveis/<int:box_id>/eventos', methods=['POST'])
+@require_role('admin', 'operacional', 'financeiro')
+def criar_box_evento(box_id):
+    box = GuardaMovel.query.get_or_404(box_id)
+    data = request.json or {}
+    tipo = data.get('tipo')
+    tipos_validos = ('entrada', 'saida', 'troca_cliente', 'renovacao', 'encerramento', 'manutencao', 'liberacao')
+    if tipo not in tipos_validos:
+        return err(f"tipo deve ser um de: {', '.join(tipos_validos)}")
+
+    u = current_user()
+    evento = BoxEvento(
+        box_id=box_id,
+        tipo=tipo,
+        cliente_id=data.get('cliente_id') or box.cliente_id,
+        cliente_nome=data.get('cliente_nome') or box.cliente_nome,
+        user_id=u.id if u else None,
+        data_evento=datetime.utcnow(),
+        contrato_referencia=data.get('contrato_referencia') or box.contrato_referencia,
+        valor_mensal=float(data.get('valor_mensal', box.valor_mensal or 0)),
+        observacoes=data.get('observacoes', ''),
+    )
+    db.session.add(evento)
+
+    # Atualiza estado do box conforme tipo
+    status_map = {
+        'entrada': 'ocupado',
+        'saida': 'livre',
+        'troca_cliente': 'ocupado',
+        'renovacao': 'ocupado',
+        'encerramento': 'livre',
+        'manutencao': 'manutencao',
+        'liberacao': 'livre',
+    }
+    box.status = status_map.get(tipo, box.status)
+
+    if tipo == 'entrada':
+        box.cliente_id = data.get('cliente_id', box.cliente_id)
+        box.cliente_nome = data.get('cliente_nome', box.cliente_nome)
+        box.valor_mensal = float(data.get('valor_mensal', box.valor_mensal or 0))
+        box.data_entrada = datetime.utcnow()
+        if data.get('data_saida_prevista'):
+            box.data_saida_prevista = datetime.fromisoformat(data['data_saida_prevista'])
+        box.contrato_referencia = data.get('contrato_referencia', box.contrato_referencia)
+    elif tipo in ('saida', 'encerramento', 'liberacao'):
+        box.cliente_id = None
+        box.cliente_nome = None
+        box.valor_mensal = 0
+        box.data_saida_prevista = None
+    elif tipo == 'troca_cliente':
+        box.cliente_id = data.get('cliente_id', box.cliente_id)
+        box.cliente_nome = data.get('cliente_nome', box.cliente_nome)
+        box.valor_mensal = float(data.get('valor_mensal', box.valor_mensal or 0))
+    elif tipo == 'renovacao':
+        if data.get('data_saida_prevista'):
+            box.data_saida_prevista = datetime.fromisoformat(data['data_saida_prevista'])
+        if data.get('valor_mensal'):
+            box.valor_mensal = float(data['valor_mensal'])
+
+    if hasattr(box, 'updated_at'):
+        box.updated_at = datetime.utcnow()
+
+    registrar_audit(u, f'box_{tipo}', 'guarda_movel', box_id,
+                    f'Evento {tipo} no box {box.numero}', dados_novos=data)
+    db.session.commit()
+    return jsonify(_box_evento_dict(evento)), 201
+
+
+@app.route('/api/guarda-moveis/<int:box_id>/historico', methods=['GET'])
+@jwt_required()
+def historico_box(box_id):
+    GuardaMovel.query.get_or_404(box_id)
+    eventos = (BoxEvento.query
+               .filter_by(box_id=box_id)
+               .order_by(BoxEvento.data_evento.desc())
+               .all())
+    return jsonify([_box_evento_dict(e) for e in eventos])
+
+
+# ── AUDIT LOG ─────────────────────────────────────────────────────────────────
+@app.route('/api/audit-log', methods=['GET'])
+@require_role('admin')
+def listar_audit_log():
+    entidade = request.args.get('entidade', '')
+    user_id = request.args.get('user_id', '')
+    limit = min(int(request.args.get('limit', 100)), 500)
+    offset = int(request.args.get('offset', 0))
+    query = AuditLog.query
+    if entidade:
+        query = query.filter_by(entidade=entidade)
+    if user_id:
+        query = query.filter_by(user_id=int(user_id))
+    logs = query.order_by(AuditLog.timestamp.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    return jsonify({
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "logs": [{
+            "id": l.id, "user_id": l.user_id, "user_nome": l.user_nome,
+            "acao": l.acao, "entidade": l.entidade, "entidade_id": l.entidade_id,
+            "descricao": l.descricao,
+            "dados_anteriores": json.loads(l.dados_anteriores) if l.dados_anteriores else None,
+            "dados_novos": json.loads(l.dados_novos) if l.dados_novos else None,
+            "ip": l.ip,
+            "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+        } for l in logs]
+    })
+
+
+# ── JORNADAS ─────────────────────────────────────────────────────────────────
+@app.route('/api/jornadas/<int:user_id>', methods=['GET'])
+@jwt_required()
+def obter_jornada(user_id):
+    u = current_user()
+    # Qualquer usuário pode ver a própria jornada; admin vê qualquer uma
+    if u.id != user_id and u.role != 'admin':
+        return err("Acesso negado", 403)
+    j = Jornada.query.filter_by(user_id=user_id).first()
+    if not j:
+        return jsonify(None)
+    return jsonify({
+        "id": j.id, "user_id": j.user_id,
+        "hora_entrada": j.hora_entrada, "hora_saida": j.hora_saida,
+        "dias_semana": json.loads(j.dias_semana) if j.dias_semana else [],
+        "tipo_turno": j.tipo_turno,
+        "carga_horaria_semanal": j.carga_horaria_semanal,
+        "observacoes": j.observacoes,
+    })
+
+
+@app.route('/api/jornadas/<int:user_id>', methods=['PUT'])
+@require_role('admin')
+def salvar_jornada(user_id):
+    User.query.get_or_404(user_id)
+    data = request.json or {}
+    j = Jornada.query.filter_by(user_id=user_id).first()
+    if not j:
+        j = Jornada(user_id=user_id)
+        db.session.add(j)
+    if 'hora_entrada' in data:
+        j.hora_entrada = data['hora_entrada']
+    if 'hora_saida' in data:
+        j.hora_saida = data['hora_saida']
+    if 'dias_semana' in data:
+        j.dias_semana = json.dumps(data['dias_semana'])
+    if 'tipo_turno' in data:
+        j.tipo_turno = data['tipo_turno']
+    if 'carga_horaria_semanal' in data:
+        j.carga_horaria_semanal = float(data['carga_horaria_semanal'])
+    if 'observacoes' in data:
+        j.observacoes = data['observacoes']
+    registrar_audit(current_user(), 'atualizar', 'jornada', user_id,
+                    f'Jornada atualizada para user {user_id}')
+    db.session.commit()
+    return jsonify({"status": "ok", "user_id": user_id})
+
+
+# ── TURNOS ─────────────────────────────────────────────────────────────────────
+@app.route('/api/turnos/iniciar', methods=['POST'])
+@jwt_required()
+def iniciar_turno():
+    u = current_user()
+    hoje = datetime.utcnow().date()
+    turno_aberto = Turno.query.filter_by(user_id=u.id, status='aberto').first()
+    if turno_aberto:
+        return jsonify({"turno_id": turno_aberto.id, "ja_aberto": True})
+    turno = Turno(
+        user_id=u.id,
+        data=hoje,
+        inicio=datetime.utcnow(),
+        status='aberto',
+        minutos_online=0, minutos_ativo=0, minutos_ocioso=0, total_acoes=0,
+    )
+    db.session.add(turno)
+    db.session.commit()
+    return jsonify({"turno_id": turno.id, "ja_aberto": False}), 201
+
+
+@app.route('/api/turnos/encerrar', methods=['POST'])
+@jwt_required()
+def encerrar_turno():
+    u = current_user()
+    turno = Turno.query.filter_by(user_id=u.id, status='aberto').first()
+    if not turno:
+        return err("Nenhum turno aberto encontrado")
+    agora = datetime.utcnow()
+    turno.fim = agora
+    turno.status = 'encerrado'
+    # Calcula minutos online
+    delta = int((agora - turno.inicio).total_seconds() / 60)
+    turno.minutos_online = delta
+    # Ações = logs de atividade no período
+    acoes = UserActivityLog.query.filter(
+        UserActivityLog.user_id == u.id,
+        UserActivityLog.timestamp >= turno.inicio,
+        UserActivityLog.timestamp <= agora,
+    ).count()
+    turno.total_acoes = acoes
+    # Ocioso = online - ativo (estimativa simples)
+    turno.minutos_ativo = min(delta, acoes * 2)  # ~2min de atividade por ação
+    turno.minutos_ocioso = max(0, delta - turno.minutos_ativo)
+    db.session.commit()
+    return jsonify({
+        "turno_id": turno.id,
+        "minutos_online": turno.minutos_online,
+        "minutos_ativo": turno.minutos_ativo,
+        "minutos_ocioso": turno.minutos_ocioso,
+        "total_acoes": turno.total_acoes,
+    })
+
+
+@app.route('/api/turnos', methods=['GET'])
+@jwt_required()
+def listar_turnos():
+    u = current_user()
+    user_id = request.args.get('user_id', '')
+    data_str = request.args.get('data', '')
+    # Não-admin só vê os próprios turnos
+    if u.role != 'admin':
+        user_id = str(u.id)
+    query = Turno.query
+    if user_id:
+        query = query.filter_by(user_id=int(user_id))
+    if data_str:
+        try:
+            from datetime import date
+            d = date.fromisoformat(data_str)
+            query = query.filter_by(data=d)
+        except Exception:
+            pass
+    turnos = query.order_by(Turno.inicio.desc()).limit(100).all()
+    return jsonify([{
+        "id": t.id, "user_id": t.user_id,
+        "data": t.data.isoformat() if t.data else None,
+        "inicio": t.inicio.isoformat() if t.inicio else None,
+        "fim": t.fim.isoformat() if t.fim else None,
+        "minutos_online": t.minutos_online,
+        "minutos_ativo": t.minutos_ativo,
+        "minutos_ocioso": t.minutos_ocioso,
+        "total_acoes": t.total_acoes,
+        "status": t.status,
+    } for t in turnos])
 
 
 # ── INICIALIZAÇÃO ─────────────────────────────────────────────────────────────

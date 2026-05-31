@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FileText, Search, ExternalLink, Send, Truck, CheckCircle, X, AlertCircle } from 'lucide-react';
+import { FileText, Search, ExternalLink, Send, Truck, CheckCircle, X, AlertCircle, Share2, Mail } from 'lucide-react';
 import { api } from '../lib/api';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -46,6 +46,49 @@ const Contratos = () => {
     if (!c.drive_url) { alert('URL do contrato não disponível. Verifique a configuração do Google Drive.'); return; }
     window.open(c.drive_url, '_blank');
     setRevisados(prev => new Set([...prev, c.id]));
+  };
+
+  const enviarWhatsApp = (c) => {
+    const msg = [
+      `📋 *CONTRATO DE SERVIÇO — LEGACY MOVING*`,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      ``,
+      `Prezado(a) *${c.cliente}*,`,
+      ``,
+      `Segue abaixo o resumo do seu contrato com a Legacy Moving:`,
+      ``,
+      `📄 *Contrato:* ${c.numero}`,
+      `🏠 *Tipo:* ${TIPO_LABEL[c.tipo_servico] || c.tipo_servico || '—'}`,
+      `💰 *Valor Total:* ${fmt(c.valor)}`,
+      c.data_execucao ? `📅 *Data de Execução:* ${fmtData(c.data_execucao)}` : '',
+      c.drive_url ? `\n🔗 *Contrato completo:* ${c.drive_url}` : '',
+      ``,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      `✅ Para confirmar os serviços, por favor responda esta mensagem.`,
+      ``,
+      `Atenciosamente,`,
+      `*Legacy Moving*`,
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  const enviarEmail = (c) => {
+    const subject = `Contrato ${c.numero} — Legacy Moving`;
+    const body = [
+      `Prezado(a) ${c.cliente},`,
+      ``,
+      `Segue o resumo do seu contrato:`,
+      ``,
+      `Contrato: ${c.numero}`,
+      `Tipo: ${TIPO_LABEL[c.tipo_servico] || c.tipo_servico || '—'}`,
+      `Valor Total: ${fmt(c.valor)}`,
+      c.data_execucao ? `Data de Execução: ${fmtData(c.data_execucao)}` : '',
+      c.drive_url ? `\nContrato PDF: ${c.drive_url}` : '',
+      ``,
+      `Atenciosamente,`,
+      `Legacy Moving`,
+    ].filter(Boolean).join('\n');
+    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
   const gerarOS = async (c) => {
@@ -145,6 +188,18 @@ const Contratos = () => {
                         <Send size={12} />Enviar ao cliente
                       </button>
                     )}
+
+                    {/* WhatsApp */}
+                    <button onClick={() => enviarWhatsApp(c)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: '#15803d' }}>
+                      <Share2 size={12} />WhatsApp
+                    </button>
+
+                    {/* Email */}
+                    <button onClick={() => enviarEmail(c)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: '#1d4ed8' }}>
+                      <Mail size={12} />E-mail
+                    </button>
 
                     {/* Gerar OS — apenas quando não é rascunho e não tem OS ainda */}
                     {c.status !== 'rascunho' && (

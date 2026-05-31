@@ -8,9 +8,14 @@ import { api } from '../lib/api';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' };
-const CATEGORIAS = ['Combustível', 'Salários', 'Manutenção', 'Materiais', 'Aluguel', 'Marketing', 'Impostos', 'Outros'];
+const CATEGORIAS = [
+  'Combustível', 'Salários', 'Manutenção', 'Materiais', 'Aluguel', 'Marketing', 'Impostos',
+  'Diária', 'Almoço', 'Vale Transporte', 'Pedágio', 'Zona Azul', 'Telefonia',
+  'Rastreador', 'Seguro Mudança', 'Outros',
+];
 const CORES_PIZZA = ['#2563eb','#7c3aed','#0891b2','#16a34a','#dc2626','#d97706','#0d9488','#6b7280'];
-const EMPTY_DESP = { categoria: 'Combustível', descricao: '', valor: '', data: new Date().toISOString().slice(0, 10) };
+const EMPTY_DESP = { categoria: 'Combustível', descricao: '', valor: '', data: new Date().toISOString().slice(0, 10), comprovante_url: '' };
+const EMPTY_RECORRENTE = { tipo: 'despesa', categoria: 'Salários', descricao: '', valor: '', dia_vencimento: 5, ativo: true, observacoes: '' };
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
 const Financeiro = () => {
@@ -28,6 +33,13 @@ const Financeiro = () => {
   const [salvando, setSalvando] = useState(false);
   const [erroForm, setErroForm] = useState('');
   const [aba, setAba] = useState('visao_geral');
+  // Recorrentes
+  const [recorrentes, setRecorrentes] = useState([]);
+  const [showModalRecorrente, setShowModalRecorrente] = useState(false);
+  const [editandoRecorrente, setEditandoRecorrente] = useState(null);
+  const [formRecorrente, setFormRecorrente] = useState(EMPTY_RECORRENTE);
+  const [salvandoRecorrente, setSalvandoRecorrente] = useState(false);
+  const [erroRecorrente, setErroRecorrente] = useState('');
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -41,11 +53,17 @@ const Financeiro = () => {
       .finally(() => setLoading(false));
   }, [mes, ano]);
 
+  const carregarRecorrentes = useCallback(() => {
+    api.getRecorrentes().then(setRecorrentes).catch(() => {});
+  }, []);
+
+  useEffect(() => { carregarRecorrentes(); }, [carregarRecorrentes]);
+
   useEffect(() => { carregar(); }, [carregar]);
 
   const abrirModal = (d = null) => {
     setEditando(d);
-    setForm(d ? { categoria: d.categoria, descricao: d.descricao || '', valor: String(d.valor), data: d.data ? d.data.slice(0, 10) : '' } : EMPTY_DESP);
+    setForm(d ? { categoria: d.categoria, descricao: d.descricao || '', valor: String(d.valor), data: d.data ? d.data.slice(0, 10) : '', comprovante_url: d.comprovante_url || '' } : EMPTY_DESP);
     setErroForm('');
     setShowModal(true);
   };
@@ -68,6 +86,40 @@ const Financeiro = () => {
     try { await api.deleteDespesa(id); carregar(); }
     catch (e) { alert(e.message); }
   };
+
+  const abrirModalRecorrente = (r = null) => {
+    setEditandoRecorrente(r);
+    setFormRecorrente(r ? {
+      tipo: r.tipo, categoria: r.categoria, descricao: r.descricao,
+      valor: String(r.valor), dia_vencimento: r.dia_vencimento,
+      ativo: r.ativo, observacoes: r.observacoes || '',
+    } : EMPTY_RECORRENTE);
+    setErroRecorrente('');
+    setShowModalRecorrente(true);
+  };
+
+  const salvarRecorrente = async () => {
+    if (!formRecorrente.descricao.trim()) { setErroRecorrente('Descrição é obrigatória'); return; }
+    if (!formRecorrente.valor) { setErroRecorrente('Valor é obrigatório'); return; }
+    setSalvandoRecorrente(true);
+    try {
+      const payload = { ...formRecorrente, valor: parseFloat(formRecorrente.valor), dia_vencimento: parseInt(formRecorrente.dia_vencimento) };
+      if (editandoRecorrente) await api.updateRecorrente(editandoRecorrente.id, payload);
+      else await api.createRecorrente(payload);
+      setShowModalRecorrente(false);
+      carregarRecorrentes();
+    } catch (e) { setErroRecorrente(e.message); }
+    finally { setSalvandoRecorrente(false); }
+  };
+
+  const deletarRecorrente = async (id) => {
+    if (!window.confirm('Excluir recorrente?')) return;
+    try { await api.deleteRecorrente(id); carregarRecorrentes(); }
+    catch (e) { alert(e.message); }
+  };
+
+  const totalRecorrentesReceitas = recorrentes.filter(r => r.ativo && r.tipo === 'receita').reduce((s, r) => s + r.valor, 0);
+  const totalRecorrentesDespesas = recorrentes.filter(r => r.ativo && r.tipo === 'despesa').reduce((s, r) => s + r.valor, 0);
 
   if (loading) return <Spinner />;
   if (error) return <Erro msg={error} onRetry={carregar} />;
@@ -143,6 +195,7 @@ const Financeiro = () => {
           { key: 'visao_geral', label: 'Visão Geral' },
           { key: 'graficos', label: 'Gráficos' },
           { key: 'despesas', label: `Despesas (${despesas.length})` },
+          { key: 'recorrentes', label: `Recorrentes (${recorrentes.length})` },
         ].map(a => (
           <button key={a.key} onClick={() => setAba(a.key)}
             style={{ padding: '10px 20px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
@@ -154,56 +207,128 @@ const Financeiro = () => {
       </div>
 
       {/* Visão Geral */}
-      {aba === 'visao_geral' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', background: '#f0fdf4', borderBottom: '1px solid #dcfce7' }}>
-              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#15803d' }}>📈 Receitas — {MESES[mes-1]}/{ano}</h3>
-            </div>
-            <div style={{ padding: '16px 20px' }}>
-              {[
-                { label: 'Mudanças realizadas', value: r.receita_mudancas, sub: `${r.mudancas_realizadas || 0} serviços` },
-                { label: 'Guarda-Móveis (mensal)', value: r.receita_guarda_moveis, sub: null },
-              ].map((item, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < 1 ? '1px solid #f3f4f6' : 'none' }}>
-                  <div>
-                    <p style={{ margin: 0, fontSize: 14, color: '#374151' }}>{item.label}</p>
-                    {item.sub && <p style={{ margin: 0, fontSize: 11, color: '#9ca3af' }}>{item.sub}</p>}
+      {aba === 'visao_geral' && (() => {
+        const recAtivos = recorrentes.filter(rc => rc.ativo);
+        const recReceitas = recAtivos.filter(rc => rc.tipo === 'receita');
+        const recDespesas = recAtivos.filter(rc => rc.tipo === 'despesa');
+        const totalRecRec = recReceitas.reduce((s, rc) => s + rc.valor, 0);
+        const totalRecDesp = recDespesas.reduce((s, rc) => s + rc.valor, 0);
+        const receitaProjetada = (r.receita_total || 0) + totalRecRec;
+        const despesaProjetada = (r.total_despesas || 0) + totalRecDesp;
+        const resultadoProjetado = receitaProjetada - despesaProjetada;
+        const margemProjetada = receitaProjetada > 0 ? resultadoProjetado / receitaProjetada * 100 : 0;
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+              <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ padding: '14px 20px', background: '#f0fdf4', borderBottom: '1px solid #dcfce7' }}>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#15803d' }}>📈 Receitas — {MESES[mes-1]}/{ano}</h3>
+                </div>
+                <div style={{ padding: '16px 20px' }}>
+                  {[
+                    { label: 'Mudanças realizadas', value: r.receita_mudancas, sub: `${r.mudancas_realizadas || 0} serviços` },
+                    { label: 'Guarda-Móveis (mensal)', value: r.receita_guarda_moveis, sub: null },
+                  ].map((item, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < 1 ? '1px solid #f3f4f6' : 'none' }}>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 14, color: '#374151' }}>{item.label}</p>
+                        {item.sub && <p style={{ margin: 0, fontSize: 11, color: '#9ca3af' }}>{item.sub}</p>}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#15803d' }}>{fmt(item.value)}</p>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', marginTop: 4 }}>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>TOTAL RECEITAS</p>
+                    <p style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#15803d' }}>{fmt(r.receita_total)}</p>
                   </div>
-                  <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#15803d' }}>{fmt(item.value)}</p>
                 </div>
-              ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', marginTop: 4 }}>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>TOTAL RECEITAS</p>
-                <p style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#15803d' }}>{fmt(r.receita_total)}</p>
               </div>
-            </div>
-          </div>
 
-          <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', background: '#fef2f2', borderBottom: '1px solid #fee2e2' }}>
-              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#b91c1c' }}>📊 DRE Simplificado — {MESES[mes-1]}/{ano}</h3>
-            </div>
-            <div style={{ padding: '16px 20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>Receita Total</p>
-                <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#15803d' }}>{fmt(r.receita_total)}</p>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>(−) Despesas Operacionais</p>
-                <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#dc2626' }}>({fmt(r.total_despesas)})</p>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', marginTop: 4, borderTop: '2px solid #e5e7eb' }}>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>RESULTADO LÍQUIDO</p>
-                  <p style={{ margin: 0, fontSize: 11, color: margemColor, fontWeight: 600 }}>Margem: {margem.toFixed(1)}%</p>
+              <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ padding: '14px 20px', background: '#fef2f2', borderBottom: '1px solid #fee2e2' }}>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#b91c1c' }}>📊 DRE Simplificado — {MESES[mes-1]}/{ano}</h3>
                 </div>
-                <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: (r.lucro_liquido||0) >= 0 ? '#15803d' : '#dc2626' }}>{fmt(r.lucro_liquido)}</p>
+                <div style={{ padding: '16px 20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
+                    <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>Receita Total</p>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#15803d' }}>{fmt(r.receita_total)}</p>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
+                    <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>(−) Despesas Operacionais</p>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#dc2626' }}>({fmt(r.total_despesas)})</p>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', marginTop: 4, borderTop: '2px solid #e5e7eb' }}>
+                    <div>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>RESULTADO LÍQUIDO</p>
+                      <p style={{ margin: 0, fontSize: 11, color: margemColor, fontWeight: 600 }}>Margem: {margem.toFixed(1)}%</p>
+                    </div>
+                    <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: (r.lucro_liquido||0) >= 0 ? '#15803d' : '#dc2626' }}>{fmt(r.lucro_liquido)}</p>
+                  </div>
+                </div>
               </div>
             </div>
+
+            {/* Recorrentes do Mês */}
+            {recAtivos.length > 0 && (
+              <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ padding: '14px 20px', background: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#0369a1' }}>🔄 Recorrentes do Mês — {MESES[mes-1]}/{ano}</h3>
+                  <span style={{ fontSize: 12, color: '#0369a1', fontWeight: 500 }}>{recAtivos.length} lançamento{recAtivos.length !== 1 ? 's' : ''} ativo{recAtivos.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderBottom: '1px solid #f3f4f6' }}>
+                  <div style={{ padding: '14px 20px', borderRight: '1px solid #f3f4f6' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>Receitas Recorrentes</p>
+                    <p style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#15803d' }}>+ {fmt(totalRecRec)}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{recReceitas.length} lançamento{recReceitas.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div style={{ padding: '14px 20px', borderRight: '1px solid #f3f4f6' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>Despesas Recorrentes</p>
+                    <p style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#dc2626' }}>− {fmt(totalRecDesp)}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{recDespesas.length} lançamento{recDespesas.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div style={{ padding: '14px 20px', background: resultadoProjetado >= 0 ? '#f0fdf4' : '#fef2f2' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>Resultado Projetado</p>
+                    <p style={{ margin: 0, fontSize: 18, fontWeight: 700, color: resultadoProjetado >= 0 ? '#15803d' : '#dc2626' }}>{fmt(resultadoProjetado)}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: resultadoProjetado >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600, marginTop: 2 }}>Margem: {margemProjetada.toFixed(1)}%</p>
+                  </div>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f9fafb' }}>
+                      {['Tipo', 'Categoria', 'Descrição', 'Vence dia', 'Valor/mês'].map(h => (
+                        <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recAtivos.sort((a, b) => a.dia_vencimento - b.dia_vencimento).map(rc => (
+                      <tr key={rc.id} style={{ borderTop: '0.5px solid #f3f4f6' }}>
+                        <td style={{ padding: '9px 16px' }}>
+                          <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, fontWeight: 600,
+                            background: rc.tipo === 'receita' ? '#dcfce7' : '#fee2e2',
+                            color: rc.tipo === 'receita' ? '#16a34a' : '#dc2626' }}>
+                            {rc.tipo === 'receita' ? '↑ Receita' : '↓ Despesa'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '9px 16px' }}>
+                          <span style={{ background: '#f3f4f6', borderRadius: 5, padding: '2px 7px', fontSize: 11, color: '#374151' }}>{rc.categoria}</span>
+                        </td>
+                        <td style={{ padding: '9px 16px', fontSize: 13, color: '#374151' }}>{rc.descricao}</td>
+                        <td style={{ padding: '9px 16px', fontSize: 13, color: '#6b7280' }}>
+                          {mes}/{ano} dia {rc.dia_vencimento}
+                        </td>
+                        <td style={{ padding: '9px 16px', fontSize: 13, fontWeight: 700, color: rc.tipo === 'receita' ? '#15803d' : '#dc2626' }}>
+                          {rc.tipo === 'despesa' ? '− ' : '+ '}{fmt(rc.valor)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Gráficos */}
       {aba === 'graficos' && (
@@ -298,7 +423,13 @@ const Financeiro = () => {
                   <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{d.descricao || '—'}</td>
                   <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#dc2626' }}>{fmt(d.valor)}</td>
                   <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      {d.comprovante_url && (
+                        <a href={d.comprovante_url} target="_blank" rel="noopener noreferrer" title="Ver comprovante"
+                          style={{ padding: '5px', color: '#2563eb', display: 'flex', alignItems: 'center' }}>
+                          📎
+                        </a>
+                      )}
                       <button onClick={() => abrirModal(d)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={15} /></button>
                       <button onClick={() => deletar(d.id)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={15} /></button>
                     </div>
@@ -307,6 +438,135 @@ const Financeiro = () => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── ABA RECORRENTES ────────────────────────────────────────── */}
+      {aba === 'recorrentes' && (
+        <div>
+          {/* Resumo projeção */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 20 }}>
+            <div style={{ background: 'white', borderRadius: 12, padding: '18px 20px', border: '1px solid #e5e7eb', borderLeft: '4px solid #16a34a' }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Receitas Recorrentes/mês</p>
+              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#16a34a' }}>{fmt(totalRecorrentesReceitas)}</p>
+            </div>
+            <div style={{ background: 'white', borderRadius: 12, padding: '18px 20px', border: '1px solid #e5e7eb', borderLeft: '4px solid #dc2626' }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Despesas Recorrentes/mês</p>
+              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#dc2626' }}>{fmt(totalRecorrentesDespesas)}</p>
+            </div>
+            <div style={{ background: '#0f1f3d', borderRadius: 12, padding: '18px 20px', borderLeft: '4px solid #2563eb' }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>Projeção Mensal</p>
+              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: (totalRecorrentesReceitas - totalRecorrentesDespesas) >= 0 ? '#4ade80' : '#f87171' }}>
+                {fmt(totalRecorrentesReceitas - totalRecorrentesDespesas)}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+            <button onClick={() => abrirModalRecorrente()}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+              <Plus size={14} /> Novo Recorrente
+            </button>
+          </div>
+
+          <div style={{ background: 'white', borderRadius: 12, border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  {['Tipo', 'Categoria', 'Descrição', 'Valor/mês', 'Vencimento', 'Status', 'Ações'].map(h => (
+                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {recorrentes.length === 0 ? (
+                  <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: '#9ca3af' }}>Nenhum lançamento recorrente cadastrado</td></tr>
+                ) : recorrentes.map(r => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '11px 14px' }}>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 600,
+                        background: r.tipo === 'receita' ? '#dcfce7' : '#fee2e2',
+                        color: r.tipo === 'receita' ? '#16a34a' : '#dc2626' }}>
+                        {r.tipo === 'receita' ? '↑ Receita' : '↓ Despesa'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '11px 14px', fontSize: 12 }}>
+                      <span style={{ background: '#f3f4f6', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>{r.categoria}</span>
+                    </td>
+                    <td style={{ padding: '11px 14px', fontSize: 13 }}>{r.descricao}</td>
+                    <td style={{ padding: '11px 14px', fontSize: 13, fontWeight: 700, color: r.tipo === 'receita' ? '#16a34a' : '#dc2626' }}>{fmt(r.valor)}</td>
+                    <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>Dia {r.dia_vencimento}</td>
+                    <td style={{ padding: '11px 14px' }}>
+                      <button onClick={() => api.updateRecorrente(r.id, { ativo: !r.ativo }).then(carregarRecorrentes)}
+                        style={{ fontSize: 11, padding: '2px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 600,
+                          background: r.ativo ? '#dcfce7' : '#f3f4f6',
+                          color: r.ativo ? '#16a34a' : '#9ca3af' }}>
+                        {r.ativo ? '✓ Ativo' : '○ Inativo'}
+                      </button>
+                    </td>
+                    <td style={{ padding: '11px 14px' }}>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => abrirModalRecorrente(r)} style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={14} /></button>
+                        <button onClick={() => deletarRecorrente(r.id)} style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal novo/editar recorrente */}
+      {showModalRecorrente && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 24, width: 460, maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{editandoRecorrente ? 'Editar Recorrente' : 'Novo Lançamento Recorrente'}</h3>
+              <button onClick={() => setShowModalRecorrente(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Tipo *</label>
+                <select value={formRecorrente.tipo} onChange={e => setFormRecorrente(f => ({ ...f, tipo: e.target.value }))} style={inputStyle}>
+                  <option value="despesa">↓ Despesa</option>
+                  <option value="receita">↑ Receita</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Categoria *</label>
+                <select value={formRecorrente.categoria} onChange={e => setFormRecorrente(f => ({ ...f, categoria: e.target.value }))} style={inputStyle}>
+                  {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Descrição *</label>
+              <input value={formRecorrente.descricao} onChange={e => setFormRecorrente(f => ({ ...f, descricao: e.target.value }))} placeholder="Ex: Aluguel do galpão" style={inputStyle} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Valor (R$) *</label>
+                <input type="number" min="0" step="0.01" value={formRecorrente.valor} onChange={e => setFormRecorrente(f => ({ ...f, valor: e.target.value }))} placeholder="0.00" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Dia de Vencimento</label>
+                <input type="number" min="1" max="31" value={formRecorrente.dia_vencimento} onChange={e => setFormRecorrente(f => ({ ...f, dia_vencimento: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 13, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Observações</label>
+              <textarea value={formRecorrente.observacoes} onChange={e => setFormRecorrente(f => ({ ...f, observacoes: e.target.value }))} rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
+            </div>
+            {erroRecorrente && <p style={{ color: '#dc2626', fontSize: 13, margin: '0 0 10px' }}>{erroRecorrente}</p>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+              <button onClick={() => setShowModalRecorrente(false)} style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: 'white' }}>Cancelar</button>
+              <button onClick={salvarRecorrente} disabled={salvandoRecorrente} style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+                {salvandoRecorrente ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -336,6 +596,24 @@ const Financeiro = () => {
                 <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data</label>
                 <input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} style={inputStyle} />
               </div>
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>
+                Comprovante / Anexo <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '400' }}>(URL do Google Drive, link de imagem, etc.)</span>
+              </label>
+              <input
+                value={form.comprovante_url || ''}
+                onChange={e => setForm({ ...form, comprovante_url: e.target.value })}
+                placeholder="https://drive.google.com/file/d/..."
+                style={inputStyle}
+              />
+              {form.comprovante_url && (
+                <p style={{ margin: '4px 0 0', fontSize: '11px' }}>
+                  <a href={form.comprovante_url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                    📎 Ver comprovante
+                  </a>
+                </p>
+              )}
             </div>
             {erroForm && <p style={{ color: '#dc2626', fontSize: '13px' }}>{erroForm}</p>}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>

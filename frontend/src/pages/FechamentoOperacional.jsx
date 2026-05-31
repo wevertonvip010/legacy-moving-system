@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   DollarSign, TrendingUp, TrendingDown, AlertCircle, CheckCircle,
-  ChevronDown, ChevronRight, Save, Award, X, Eye
+  ChevronDown, ChevronRight, Save, Award, X, Eye, Lock
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -27,6 +28,8 @@ const CATEGORIAS_CUSTO = [
 export default function FechamentoOperacional() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [loading, setLoading] = useState(true);
   const [fechamentos, setFechamentos] = useState([]);
   const [ordens, setOrdens] = useState([]);
@@ -110,6 +113,10 @@ export default function FechamentoOperacional() {
   };
 
   const reabrir = async () => {
+    if (!isAdmin) {
+      alert('Apenas administradores podem reabrir fechamentos finalizados.');
+      return;
+    }
     if (!confirm('Reabrir este fechamento para edição? Ele voltará para o status de rascunho.')) return;
     setSalvando(true);
     try {
@@ -386,8 +393,9 @@ export default function FechamentoOperacional() {
               </button>
               {fechamento.status === 'finalizado' ? (
                 <button onClick={reabrir} disabled={salvando}
-                  style={{ flex: 1, minWidth: '140px', padding: '12px', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                  ↺ Reabrir fechamento
+                  title={!isAdmin ? 'Apenas administradores podem reabrir' : ''}
+                  style={{ flex: 1, minWidth: '140px', padding: '12px', background: isAdmin ? '#f59e0b' : '#9ca3af', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: isAdmin ? 'pointer' : 'not-allowed', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                  {isAdmin ? '↺' : <Lock size={15} />} Reabrir fechamento
                 </button>
               ) : (
                 <button onClick={finalizar} disabled={finalizando || !fechamento.receita_bruta}

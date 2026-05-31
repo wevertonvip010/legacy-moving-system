@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend
+  ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  LineChart, Line
 } from 'recharts';
 import { api } from '../lib/api';
 
@@ -108,9 +109,13 @@ const Avarias = () => {
   }, []);
 
   const selecionarOS = (osId) => {
-    if (!osId) { setForm(f => ({ ...f, os_id: '', os_numero: '', cliente: '', cliente_id: '', equipe: '', veiculo: '' })); return; }
+    if (!osId) {
+      setForm(f => ({ ...f, os_id: '', os_numero: '', cliente: '', cliente_id: '', equipe: '', veiculo: '', organizer_id: '' }));
+      return;
+    }
     const os = osList.find(o => String(o.id) === String(osId));
     if (!os) return;
+    // Auto-popula todos os campos da OS — usuário só preenche tipo, descrição e valor
     setForm(f => ({
       ...f,
       os_id: osId,
@@ -119,6 +124,7 @@ const Avarias = () => {
       cliente_id: os.cliente_id || '',
       equipe: os.equipe || '',
       veiculo: os.veiculo || '',
+      organizer_id: os.organizer_id || f.organizer_id || '',
     }));
   };
 
@@ -227,57 +233,107 @@ const Avarias = () => {
 
       {/* KPI Cards */}
       {resumo && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px', marginBottom: '24px' }}>
           {[
-            { label: 'Total',         value: resumo.total,          color: '#6b7280', bg: '#f3f4f6' },
-            { label: 'Abertas',       value: resumo.abertas,        color: '#b91c1c', bg: '#fee2e2' },
-            { label: 'Em Análise',    value: resumo.em_analise,     color: '#92400e', bg: '#fef9c3' },
-            { label: 'Resolvidas',    value: resumo.resolvidas,     color: '#15803d', bg: '#dcfce7' },
-            { label: 'Valor Estimado', value: fmt(resumo.valor_total_estimado), color: '#1d4ed8', bg: '#dbeafe' },
+            { label: 'Total',               value: resumo.total,          color: '#6b7280', bg: '#f3f4f6' },
+            { label: 'Abertas',             value: resumo.abertas,        color: '#b91c1c', bg: '#fee2e2' },
+            { label: 'Em Análise',          value: resumo.em_analise,     color: '#92400e', bg: '#fef9c3' },
+            { label: 'Resolvidas',          value: resumo.resolvidas,     color: '#15803d', bg: '#dcfce7' },
+            { label: 'Valor Estimado',      value: fmt(resumo.valor_total_estimado), color: '#1d4ed8', bg: '#dbeafe' },
+            { label: 'Tempo Médio Resolução', value: resumo.tempo_medio_resolucao != null ? `${Math.round(resumo.tempo_medio_resolucao)} dias` : '—', color: '#7c3aed', bg: '#ede9fe' },
           ].map((k, i) => (
             <div key={i} style={{ background: 'white', borderRadius: '10px', padding: '16px', border: '0.5px solid #e5e7eb', borderLeft: `4px solid ${k.color}` }}>
               <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{k.label}</p>
-              <p style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: k.color }}>{k.value}</p>
+              <p style={{ margin: 0, fontSize: k.value && String(k.value).length > 5 ? '16px' : '22px', fontWeight: '800', color: k.color }}>{k.value}</p>
             </div>
           ))}
         </div>
       )}
 
       {/* Charts */}
-      {avarias.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Por Tipo de Avaria</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={dadosPorTipo} cx="50%" cy="50%" outerRadius={75} dataKey="value" nameKey="name" paddingAngle={2}>
-                  {dadosPorTipo.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                </Pie>
-                <Tooltip />
-                <Legend wrapperStyle={{ fontSize: '11px' }} />
-              </PieChart>
-            </ResponsiveContainer>
+      {avarias.length > 0 && (() => {
+        const dadosEquipe = Object.entries(resumo?.por_equipe || {}).map(([name, value]) => ({ name, value }));
+        const dadosMensal = resumo?.mensal || [];
+        const temMensal = dadosMensal.some(m => m.total > 0);
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+            {/* Pie — por tipo */}
+            <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Por Tipo de Avaria</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={dadosPorTipo} cx="50%" cy="50%" outerRadius={75} dataKey="value" nameKey="name" paddingAngle={2}>
+                    {dadosPorTipo.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: '11px' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Bar — por status */}
+            <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Por Status</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={dadosPorStatus} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" name="Avarias" radius={[4, 4, 0, 0]}>
+                    {dadosPorStatus.map((entry, i) => {
+                      const status = STATUS_ORDER.find(s => STATUS[s]?.label === entry.name);
+                      const color = status ? STATUS[status]?.color : '#6b7280';
+                      return <Cell key={i} fill={color} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Line — evolução mensal (full width) */}
+            {temMensal && (
+              <div style={{ gridColumn: '1 / -1', background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Evolução Mensal de Avarias (últimos 12 meses)</h3>
+                <p style={{ margin: '0 0 16px', fontSize: '11px', color: '#9ca3af' }}>Quantidade registrada por mês</p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={dadosMensal} margin={{ top: 5, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value, name) => [value, name === 'total' ? 'Avarias' : name]}
+                      labelStyle={{ fontWeight: '600', fontSize: '12px' }}
+                    />
+                    <Line
+                      type="monotone" dataKey="total" name="Avarias"
+                      stroke="#ef4444" strokeWidth={2.5} dot={{ fill: '#ef4444', r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Bar — equipes com mais avarias */}
+            {dadosEquipe.length > 0 && (
+              <div style={{ gridColumn: dadosEquipe.length <= 3 ? undefined : '1 / -1', background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Equipes com Mais Avarias</h3>
+                <p style={{ margin: '0 0 16px', fontSize: '11px', color: '#9ca3af' }}>Top equipes por número de ocorrências</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={dadosEquipe} layout="vertical" margin={{ top: 0, right: 20, left: 10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
+                    <Tooltip />
+                    <Bar dataKey="value" name="Avarias" fill="#f97316" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>Por Status</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={dadosPorStatus} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="value" name="Avarias" radius={[4, 4, 0, 0]}>
-                  {dadosPorStatus.map((entry, i) => {
-                    const status = STATUS_ORDER.find(s => STATUS[s]?.label === entry.name);
-                    const color = status ? STATUS[status]?.color : '#6b7280';
-                    return <Cell key={i} fill={color} />;
-                  })}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Filtros */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>

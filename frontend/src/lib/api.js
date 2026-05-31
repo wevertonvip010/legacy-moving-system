@@ -4,6 +4,13 @@ function getToken() {
   return localStorage.getItem('token');
 }
 
+// ── Interceptor global de autenticação ──────────────────────────────────────
+// Registrado pelo AuthProvider para disparar logout automaticamente em 401
+let _onAuthError = null;
+export function setAuthErrorHandler(fn) {
+  _onAuthError = fn;
+}
+
 async function req(method, path, body) {
   const token = getToken();
   const opts = {
@@ -16,7 +23,13 @@ async function req(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(`${BASE}${path}`, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.erro || `Erro ${res.status}`), { status: res.status, data });
+  if (!res.ok) {
+    // 401 em qualquer endpoint que não seja o login → sessão expirada
+    if (res.status === 401 && path !== '/api/auth/login') {
+      if (_onAuthError) _onAuthError();
+    }
+    throw Object.assign(new Error(data.erro || `Erro ${res.status}`), { status: res.status, data });
+  }
   return data;
 }
 
@@ -65,6 +78,7 @@ export const api = {
   getOrganizerDashboard: (id) => req('GET', `/api/organizers/${id}/dashboard`),
   getOrganizerComissoes: (id) => req('GET', `/api/organizers/${id}/comissoes`),
   getRankingOrganizers: () => req('GET', '/api/organizers/ranking'),
+  getRankingVendedores: () => req('GET', '/api/vendedores/ranking'),
   createOrganizer: (data) => req('POST', '/api/organizers', data),
   updateOrganizer: (id, data) => req('PUT', `/api/organizers/${id}`, data),
   deleteOrganizer: (id) => req('DELETE', `/api/organizers/${id}`),
@@ -143,6 +157,7 @@ export const api = {
   entradaEstoque: (id, data) => req('POST', `/api/estoque/${id}/entrada`, data),
   saidaEstoque: (id, data) => req('POST', `/api/estoque/${id}/saida`, data),
   getMovimentacoes: (id) => req('GET', `/api/estoque/${id}/movimentacoes`),
+  getMovimentacoesRecentes: () => req('GET', '/api/estoque/movimentacoes/recentes'),
 
   // Guarda-Móveis
   getBoxes: () => req('GET', '/api/guarda-moveis'),
@@ -175,6 +190,12 @@ export const api = {
   createDespesa: (data) => req('POST', '/api/financeiro/despesas', data),
   updateDespesa: (id, data) => req('PUT', `/api/financeiro/despesas/${id}`, data),
   deleteDespesa: (id) => req('DELETE', `/api/financeiro/despesas/${id}`),
+
+  // Recorrentes financeiros
+  getRecorrentes: () => req('GET', '/api/financeiro/recorrentes'),
+  createRecorrente: (data) => req('POST', '/api/financeiro/recorrentes', data),
+  updateRecorrente: (id, data) => req('PUT', `/api/financeiro/recorrentes/${id}`, data),
+  deleteRecorrente: (id) => req('DELETE', `/api/financeiro/recorrentes/${id}`),
   getFinanceiroHistorico: () => req('GET', '/api/financeiro/historico'),
 
   // Fechamento
@@ -190,8 +211,48 @@ export const api = {
   deleteMeta: (id) => req('DELETE', `/api/metas/${id}`),
 
   // Usuários
-  getUsuarios: () => req('GET', '/api/usuarios'),
+  getUsuarios: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/api/usuarios${qs ? '?' + qs : ''}`);
+  },
+  getUsuariosPorRole: (role) => req('GET', `/api/usuarios?role=${role}&ativo=1`),
   createUsuario: (data) => req('POST', '/api/usuarios', data),
+  updateUsuario: (id, data) => req('PUT', `/api/usuarios/${id}`, data),
+  getPermissoes: (id) => req('GET', `/api/usuarios/${id}/permissoes`),
+  setPermissoes: (id, data) => req('PUT', `/api/usuarios/${id}/permissoes`, data),
+
+  // Materiais (catálogo)
+  getMateriais: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/api/materiais${qs ? '?' + qs : ''}`);
+  },
+  getMaterial: (id) => req('GET', `/api/materiais/${id}`),
+  createMaterial: (data) => req('POST', '/api/materiais', data),
+  updateMaterial: (id, data) => req('PUT', `/api/materiais/${id}`, data),
+  deleteMaterial: (id) => req('DELETE', `/api/materiais/${id}`),
+  getCategoriasMaterial: () => req('GET', '/api/materiais/categorias'),
+
+  // Guarda-Móveis — histórico de eventos
+  getBoxHistorico: (boxId) => req('GET', `/api/guarda-moveis/${boxId}/historico`),
+  createBoxEvento: (boxId, data) => req('POST', `/api/guarda-moveis/${boxId}/eventos`, data),
+
+  // Audit Log
+  getAuditLog: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/api/audit-log${qs ? '?' + qs : ''}`);
+  },
+
+  // Jornadas
+  getJornada: (userId) => req('GET', `/api/jornadas/${userId}`),
+  updateJornada: (userId, data) => req('PUT', `/api/jornadas/${userId}`, data),
+
+  // Turnos
+  iniciarTurno: () => req('POST', '/api/turnos/iniciar'),
+  encerrarTurno: () => req('POST', '/api/turnos/encerrar'),
+  getTurnos: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/api/turnos${qs ? '?' + qs : ''}`);
+  },
 
   // Avarias
   getAvarias: (params = {}) => {
@@ -207,4 +268,9 @@ export const api = {
   // Admin / Controladoria
   registrarAtividade: (data) => req('POST', '/api/admin/atividade', data),
   getAtividadeAdmin: () => req('GET', '/api/admin/atividade'),
+
+  // Configurações do Sistema
+  getConfig: () => req('GET', '/api/config'),
+  setConfig: (data) => req('PUT', '/api/config', data),
+  getConfigKey: (chave) => req('GET', `/api/config/${chave}`),
 };

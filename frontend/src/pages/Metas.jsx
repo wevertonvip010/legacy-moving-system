@@ -32,6 +32,16 @@ const TIPO_COLORS = {
 
 const RANK_MEDALS = ['🥇', '🥈', '🥉'];
 
+// ── Gamificação ────────────────────────────────────────────────────────────────
+const LEVELS = [
+  { min: 120, emoji: '🚀', label: 'Superou!',     color: '#7c3aed', bg: '#f5f3ff' },
+  { min: 100, emoji: '🏆', label: 'Meta atingida!', color: '#d97706', bg: '#fffbeb' },
+  { min:  75, emoji: '⭐', label: 'Quase lá!',    color: '#2563eb', bg: '#eff6ff' },
+  { min:  25, emoji: '🔥', label: 'Em progresso', color: '#ea580c', bg: '#fff7ed' },
+  { min:   0, emoji: '🌱', label: 'Iniciando',    color: '#6b7280', bg: '#f9fafb' },
+];
+const getLevel = (prog) => LEVELS.find(l => (prog || 0) >= l.min) || LEVELS[LEVELS.length - 1];
+
 // ── Cartão KPI ─────────────────────────────────────────────────────────────────
 const KpiCard = ({ icon: Icon, label, value, sub, color = '#2563eb', bg = '#eff6ff' }) => (
   <div style={{
@@ -78,6 +88,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 const Metas = () => {
   const [metas, setMetas] = useState([]);
   const [ranking, setRanking] = useState([]);
+  const [rankingVendedores, setRankingVendedores] = useState([]);
   const [leads, setLeads] = useState([]);
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -93,14 +104,16 @@ const Metas = () => {
     setLoading(true);
     setError(null);
     try {
-      const [m, r, l, d] = await Promise.allSettled([
+      const [m, r, rv, l, d] = await Promise.allSettled([
         api.getMetas(),
         api.getRankingOrganizers(),
+        api.getRankingVendedores(),
         api.getLeads({ limit: 500 }),
         api.dashboard(),
       ]);
       if (m.status === 'fulfilled') setMetas(m.value || []);
       if (r.status === 'fulfilled') setRanking(r.value || []);
+      if (rv.status === 'fulfilled') setRankingVendedores(rv.value || []);
       if (l.status === 'fulfilled') setLeads(Array.isArray(l.value) ? l.value : (l.value?.items || []));
       if (d.status === 'fulfilled') setDashboard(d.value);
     } catch (e) {
@@ -234,6 +247,67 @@ const Metas = () => {
         />
       </div>
 
+      {/* ── Destaques / Gamificação ───────────────────────────────────────── */}
+      {(rankingVendedores.length > 0 || ranking.length > 0 || metasAtingidas > 0) && (() => {
+        const topVend = rankingVendedores[0];
+        const topOrg  = ranking[0];
+        const melhorMeta = metas.length > 0 ? [...metas].sort((a, b) => (b.progresso || 0) - (a.progresso || 0))[0] : null;
+        const destaques = [
+          topVend && {
+            emoji: '🥇', titulo: 'Top Vendedor',
+            nome: topVend.nome,
+            stat: fmt(topVend.receita_gerada),
+            sub: `${topVend.taxa_conversao}% conversão · ${topVend.os_total} OS`,
+            color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe',
+          },
+          topOrg && {
+            emoji: '🏅', titulo: 'Top Organizer',
+            nome: topOrg.nome,
+            stat: fmt(topOrg.receita_gerada),
+            sub: `${(topOrg.taxa_conversao || 0).toFixed(1)}% conversão · ${topOrg.leads_convertidos || 0} leads`,
+            color: '#d97706', bg: '#fffbeb', border: '#fde68a',
+          },
+          melhorMeta && {
+            emoji: getLevel(melhorMeta.progresso).emoji,
+            titulo: 'Meta em Destaque',
+            nome: melhorMeta.titulo,
+            stat: `${Math.min(melhorMeta.progresso || 0, 999)}%`,
+            sub: getLevel(melhorMeta.progresso).label,
+            color: getLevel(melhorMeta.progresso).color,
+            bg: getLevel(melhorMeta.progresso).bg,
+            border: '#e5e7eb',
+          },
+        ].filter(Boolean);
+
+        if (destaques.length === 0) return null;
+        return (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+              <span style={{ fontSize: '16px' }}>🎖️</span>
+              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: '#1a1a1a' }}>Destaques do Período</h3>
+              <span style={{ fontSize: '12px', color: '#9ca3af' }}>— performance atual</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${destaques.length}, 1fr)`, gap: '12px' }}>
+              {destaques.map((d, i) => (
+                <div key={i} style={{
+                  background: d.bg, border: `1px solid ${d.border}`,
+                  borderRadius: '12px', padding: '16px 18px',
+                  display: 'flex', alignItems: 'flex-start', gap: '14px',
+                }}>
+                  <div style={{ fontSize: '28px', lineHeight: 1, flexShrink: 0 }}>{d.emoji}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: '0 0 2px', fontSize: '11px', fontWeight: '700', color: d.color, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{d.titulo}</p>
+                    <p style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: '700', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nome}</p>
+                    <p style={{ margin: '0 0 2px', fontSize: '18px', fontWeight: '800', color: d.color }}>{d.stat}</p>
+                    <p style={{ margin: 0, fontSize: '11px', color: '#6b7280' }}>{d.sub}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Gráfico de metas + Funil de leads ─────────────────────────────── */}
       {(metas.length > 0 || leadsPorStatus.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '24px' }}>
@@ -343,9 +417,19 @@ const Metas = () => {
                           {' / '}{m.tipo === 'receita' ? fmt(m.meta) : fmtNum(m.meta)}
                         </span>
                       </span>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: atingida ? '#16a34a' : color }}>
-                        {prog}%
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {(() => {
+                          const lv = getLevel(prog);
+                          return (
+                            <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', background: lv.bg, color: lv.color, fontWeight: '700', display: 'flex', alignItems: 'center', gap: '3px', border: `1px solid ${lv.color}30` }}>
+                              {lv.emoji} {lv.label}
+                            </span>
+                          );
+                        })()}
+                        <span style={{ fontSize: '13px', fontWeight: '800', color: atingida ? '#16a34a' : color }}>
+                          {prog}%
+                        </span>
+                      </div>
                     </div>
 
                     {/* Atualizar realizado inline */}
@@ -374,62 +458,57 @@ const Metas = () => {
           )}
         </div>
 
-        {/* ── Ranking de Organizers ──────────────────────────────────────── */}
+        {/* ── Ranking de Vendedores ──────────────────────────────────────── */}
         <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Award size={16} color="#d97706" /> Ranking Organizers
+              <Award size={16} color="#2563eb" /> Ranking de Vendas
             </h3>
-            <span style={{ fontSize: '12px', color: '#6b7280' }}>por performance</span>
+            <span style={{ fontSize: '12px', color: '#6b7280' }}>por receita gerada</span>
           </div>
 
-          {ranking.length === 0 ? (
+          {rankingVendedores.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '32px 0', color: '#9ca3af' }}>
               <Users size={28} style={{ margin: '0 auto 8px', display: 'block' }} />
-              <p style={{ margin: 0, fontSize: '13px' }}>Nenhum organizer ativo</p>
+              <p style={{ margin: 0, fontSize: '13px' }}>Nenhum vendedor ativo</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-              {ranking.slice(0, 10).map((o, i) => {
-                const convP = o.taxa_conversao ? o.taxa_conversao.toFixed(1) : '0.0';
-                const maxReceita = ranking[0]?.receita_gerada || 1;
-                const barW = Math.round((o.receita_gerada / maxReceita) * 100);
+              {rankingVendedores.slice(0, 10).map((v, i) => {
+                const maxReceita = rankingVendedores[0]?.receita_gerada || 1;
+                const barW = Math.round((v.receita_gerada / maxReceita) * 100);
                 return (
-                  <div key={o.id} style={{
-                    padding: '12px 14px', borderRadius: '10px', background: i === 0 ? '#fffbeb' : '#fafafa',
-                    border: `1px solid ${i === 0 ? '#fde68a' : '#e5e7eb'}`
+                  <div key={v.id} style={{
+                    padding: '12px 14px', borderRadius: '10px',
+                    background: i === 0 ? '#eff6ff' : '#fafafa',
+                    border: `1px solid ${i === 0 ? '#bfdbfe' : '#e5e7eb'}`
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '18px', lineHeight: 1 }}>{RANK_MEDALS[i] || `#${i + 1}`}</span>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{o.nome}</span>
-                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb' }}>{fmt(o.receita_gerada)}</span>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{v.nome}</span>
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb' }}>{fmt(v.receita_gerada)}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
-                          <span>{o.leads_total} leads</span>
-                          <span>{o.leads_convertidos} conv.</span>
-                          <span>{convP}% conversão</span>
+                        <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                          <span>📋 {v.leads_total} leads</span>
+                          <span>✅ {v.leads_convertidos} conv.</span>
+                          <span>🚚 {v.os_total} OS</span>
                         </div>
                       </div>
                     </div>
-                    {/* Barra de receita relativa */}
-                    <div style={{ background: '#f3f4f6', borderRadius: '20px', height: '4px', overflow: 'hidden' }}>
-                      <div style={{ width: `${barW}%`, height: '100%', background: i === 0 ? '#d97706' : '#2563eb', borderRadius: '20px' }} />
+                    <div style={{ background: '#f3f4f6', borderRadius: '20px', height: '5px', overflow: 'hidden' }}>
+                      <div style={{ width: `${barW}%`, height: '100%', background: i === 0 ? '#2563eb' : '#7c3aed', borderRadius: '20px' }} />
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
-                      <span style={{
-                        fontSize: '10px', padding: '1px 7px', borderRadius: '20px',
-                        background: '#f0f4ff', color: '#2563eb', fontWeight: '500'
-                      }}>
-                        {o.classificacao || 'N/C'}
-                      </span>
-                      {o.lucro_gerado > 0 && (
-                        <span style={{ fontSize: '10px', color: '#9ca3af' }}>
-                          Lucro: {fmt(o.lucro_gerado)}
-                        </span>
-                      )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>
+                      <span>Conversão: <strong style={{ color: v.taxa_conversao >= 50 ? '#059669' : '#6b7280' }}>{v.taxa_conversao}%</strong></span>
+                      <span>OS finalizadas: <strong style={{ color: '#374151' }}>{v.os_finalizadas}</strong></span>
                     </div>
+                    {i === 0 && (
+                      <div style={{ marginTop: '6px' }}>
+                        <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: '20px', fontWeight: '700', border: '1px solid #bfdbfe' }}>⭐ Top Vendedor</span>
+                      </div>
+                    )}
                   </div>
                 );
               })}

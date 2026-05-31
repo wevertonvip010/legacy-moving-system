@@ -6,17 +6,28 @@ import { useActivityTracker } from '../hooks/useActivityTracker';
 const Layout = ({ children }) => {
   useActivityTracker();
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '220px 1fr',
+      minHeight: '100vh',
+      background: '#f8fafc',
+    }}>
+      {/* Sidebar fixa na primeira coluna */}
       <Sidebar />
-      <div className="flex-1 flex flex-col">
+
+      {/* Área de conteúdo — segunda coluna, rolagem interna */}
+      <div style={{
+        minHeight: '100vh',
+        overflow: 'auto',
+        background: '#f8fafc',
+      }}>
         {children}
       </div>
-      
-      {/* Assistente IA Mirante */}
+
+      {/* IA Mirante — posição fixed, não afeta o grid */}
       <AssistenteMirante />
     </div>
   );
 };
 
 export default Layout;
-

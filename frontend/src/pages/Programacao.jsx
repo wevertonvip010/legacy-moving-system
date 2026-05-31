@@ -2,9 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar, Plus, ChevronLeft, ChevronRight, AlertCircle, X, Edit, Trash2, RefreshCw, Truck, Share2 } from 'lucide-react';
 import { api } from '../lib/api';
 
-const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const DIAS_SEMANA_CURTO = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+const DIAS_SEMANA_LONGO = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' };
 
+/* ── Helpers de data ─────────────────────────────────────────────────────── */
 function getSemanaISO(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -24,61 +27,128 @@ function datasDosDias(semana, ano) {
   });
 }
 
+// Retorna todas as datas visíveis no grid mensal (preenchendo semanas completas)
+function datasDoGrid(mes, ano) {
+  const primeiroDia = new Date(ano, mes - 1, 1);
+  const ultimoDia   = new Date(ano, mes, 0);
+  const diaSemana   = (primeiroDia.getDay() + 6) % 7; // 0=Mon
+  const inicio      = new Date(primeiroDia);
+  inicio.setDate(primeiroDia.getDate() - diaSemana);
+  const fimDiaSem   = (ultimoDia.getDay() + 6) % 7;
+  const fim         = new Date(ultimoDia);
+  fim.setDate(ultimoDia.getDate() + (6 - fimDiaSem));
+  const datas = [];
+  const cur = new Date(inicio);
+  while (cur <= fim) { datas.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+  return datas;
+}
+
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+/* ── Componente principal ────────────────────────────────────────────────── */
 const Programacao = () => {
-  const [programacoes, setProgramacoes] = useState([]);
-  const [osSemana, setOsSemana] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // ── Visão semanal ──────────────────────────────────────────────────────────
   const [semana, setSemana] = useState(() => getSemanaISO(new Date())[1]);
-  const [ano, setAno] = useState(() => getSemanaISO(new Date())[0]);
-  const [showModal, setShowModal] = useState(false);
-  const [editando, setEditando] = useState(null);
-  const [form, setForm] = useState({ cliente: '', data: '', equipe: '', veiculo: '', status: 'agendado' });
-  const [salvando, setSalvando] = useState(false);
-  const [erroForm, setErroForm] = useState('');
+  const [ano,    setAno]    = useState(() => getSemanaISO(new Date())[0]);
+
+  // ── Visão mensal ───────────────────────────────────────────────────────────
+  const [mesVis, setMesVis] = useState(() => new Date().getMonth() + 1);
+  const [anoVis, setAnoVis] = useState(() => new Date().getFullYear());
+
+  // ── Modo de visualização ───────────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState('mes'); // 'semana' | 'mes'
+
+  // ── Dados ──────────────────────────────────────────────────────────────────
+  const [programacoes, setProgramacoes] = useState([]);
+  const [osSemana,     setOsSemana]     = useState([]);
+  const [allOS,        setAllOS]        = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
   const [sincronizando, setSincronizando] = useState(false);
 
+  // ── Modal de alocação ──────────────────────────────────────────────────────
+  const [showModal, setShowModal] = useState(false);
+  const [editando,  setEditando]  = useState(null);
+  const [form, setForm] = useState({ cliente: '', data: '', equipe: '', veiculo: '', status: 'agendado' });
+  const [salvando,  setSalvando]  = useState(false);
+  const [erroForm,  setErroForm]  = useState('');
+
+  /* ── Carga de dados ────────────────────────────────────────────────────── */
   const carregar = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [progs, os] = await Promise.allSettled([
         api.getProgramacao({ semana, ano }),
-        api.getOS({ limit: 200 }),
+        api.getOS({ limit: 500 }),
       ]);
       if (progs.status === 'fulfilled') setProgramacoes(progs.value || []);
-      // Filtra OS com data_mudanca na semana atual
       if (os.status === 'fulfilled') {
         const osList = Array.isArray(os.value) ? os.value : (os.value?.items || []);
+        setAllOS(osList);
+        // Filtra para a semana atual
         const datas = datasDosDias(semana, ano);
         const inicio = datas[0];
-        const fim = new Date(datas[5]);
-        fim.setHours(23, 59, 59);
-        const filtradas = osList.filter(o => {
+        const fim    = new Date(datas[5]); fim.setHours(23, 59, 59);
+        setOsSemana(osList.filter(o => {
           if (!o.data_mudanca) return false;
           const dt = new Date(o.data_mudanca);
-          return dt >= inicio && dt <= fim && ['agendada', 'em_andamento'].includes(o.status);
-        });
-        setOsSemana(filtradas);
+          return dt >= inicio && dt <= fim && ['agendada', 'em_andamento', 'concluida'].includes(o.status);
+        }));
       }
     } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    finally    { setLoading(false); }
   }, [semana, ano]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  const semanaAnterior = () => {
-    if (semana === 1) { setSemana(52); setAno(a => a - 1); }
-    else setSemana(s => s - 1);
-  };
-  const semanaSeguinte = () => {
-    if (semana === 52) { setSemana(1); setAno(a => a + 1); }
-    else setSemana(s => s + 1);
+  /* ── Navegação semanal ─────────────────────────────────────────────────── */
+  const semanaAnterior = () => { if (semana === 1) { setSemana(52); setAno(a => a - 1); } else setSemana(s => s - 1); };
+  const semanaSeguinte = () => { if (semana === 52) { setSemana(1); setAno(a => a + 1); } else setSemana(s => s + 1); };
+
+  /* ── Navegação mensal ──────────────────────────────────────────────────── */
+  const mesAnterior = () => { if (mesVis === 1) { setMesVis(12); setAnoVis(a => a - 1); } else setMesVis(m => m - 1); };
+  const mesSeguinte = () => { if (mesVis === 12) { setMesVis(1); setAnoVis(a => a + 1); } else setMesVis(m => m + 1); };
+
+  /* ── Helpers por dia ────────────────────────────────────────────────────── */
+  const progsPorDia = (data) =>
+    programacoes.filter(p => p.data && new Date(p.data).toDateString() === data.toDateString());
+
+  const osPorDia = (data, listaOS = osSemana) =>
+    listaOS.filter(o => o.data_mudanca && new Date(o.data_mudanca).toDateString() === data.toDateString());
+
+  /* ── WhatsApp ───────────────────────────────────────────────────────────── */
+  const enviarWhatsApp = (data, osNoDia, progs) => {
+    const dataStr = data.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    let msg = `🚚 *PROGRAMAÇÃO LEGACY MOVING*\n📅 ${dataStr}\n━━━━━━━━━━━━━━━━━\n\n`;
+    osNoDia.forEach((o, i) => {
+      msg += `*${i + 1}. OS ${o.numero || ''}*\n`;
+      msg += `👤 Cliente: ${o.cliente || '—'}\n`;
+      if (o.endereco_origem)  msg += `📍 Origem: ${o.endereco_origem}\n`;
+      if (o.endereco_destino) msg += `📍 Destino: ${o.endereco_destino}\n`;
+      if (o.equipe)           msg += `👥 Equipe: ${o.equipe}\n`;
+      if (o.veiculo)          msg += `🚛 Veículo: ${o.veiculo}\n`;
+      if (o.hora_inicio)      msg += `⏰ Início: ${o.hora_inicio}\n`;
+      msg += '\n';
+    });
+    progs.forEach((p, i) => {
+      msg += `*${osNoDia.length + i + 1}. ${p.cliente || '—'}*\n`;
+      if (p.equipe)  msg += `👥 Equipe: ${p.equipe}\n`;
+      if (p.veiculo) msg += `🚛 Veículo: ${p.veiculo}\n`;
+      msg += '\n';
+    });
+    msg += `━━━━━━━━━━━━━━━━━\n✅ Legacy Moving — Equipe Operacional`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
+  /* ── Modal ─────────────────────────────────────────────────────────────── */
   const abrir = (p = null, dataStr = '') => {
     setEditando(p);
-    setForm(p ? { cliente: p.cliente, data: p.data ? p.data.slice(0, 16) : '', equipe: p.equipe || '', veiculo: p.veiculo || '', status: p.status } :
-      { cliente: '', data: dataStr, equipe: '', veiculo: '', status: 'agendado' });
+    setForm(p
+      ? { cliente: p.cliente, data: p.data ? p.data.slice(0, 16) : '', equipe: p.equipe || '', veiculo: p.veiculo || '', status: p.status }
+      : { cliente: '', data: dataStr, equipe: '', veiculo: '', status: 'agendado' });
     setErroForm('');
     setShowModal(true);
   };
@@ -88,11 +158,11 @@ const Programacao = () => {
     setSalvando(true);
     try {
       if (editando) await api.updateProgramacao(editando.id, form);
-      else await api.createProgramacao(form);
+      else          await api.createProgramacao(form);
       setShowModal(false);
       carregar();
     } catch (e) { setErroForm(e.message); }
-    finally { setSalvando(false); }
+    finally    { setSalvando(false); }
   };
 
   const deletar = async (id) => {
@@ -105,147 +175,305 @@ const Programacao = () => {
     setSincronizando(true);
     try {
       const res = await api.syncProgramacao();
-      alert(`✅ Sincronização concluída: ${res.sincronizadas} OS sincronizadas com a programação.`);
+      alert(`✅ Sincronização concluída: ${res.sincronizadas} OS sincronizadas.`);
       carregar();
-    } catch (e) { alert('Erro ao sincronizar: ' + e.message); }
-    finally { setSincronizando(false); }
+    } catch (e) { alert('Erro: ' + e.message); }
+    finally    { setSincronizando(false); }
   };
 
-  const datas = datasDosDias(semana, ano);
+  /* ── Dados semana ──────────────────────────────────────────────────────── */
+  const datasSemanais = datasDosDias(semana, ano);
 
-  const progsPorDia = (data) => programacoes.filter(p => {
-    if (!p.data) return false;
-    return new Date(p.data).toDateString() === data.toDateString();
-  });
-
-  const osPorDia = (data) => osSemana.filter(o => {
+  /* ── Dados mês ─────────────────────────────────────────────────────────── */
+  const gridMes   = datasDoGrid(mesVis, anoVis);
+  const osDoMes   = allOS.filter(o => {
     if (!o.data_mudanca) return false;
-    return new Date(o.data_mudanca).toDateString() === data.toDateString();
+    const dt = new Date(o.data_mudanca);
+    return dt.getFullYear() === anoVis && dt.getMonth() + 1 === mesVis;
+  });
+  // Build a quick lookup: dateString → {os[], progs[]}
+  const eventosPorDiaStr = {};
+  osDoMes.forEach(o => {
+    const key = new Date(o.data_mudanca).toDateString();
+    if (!eventosPorDiaStr[key]) eventosPorDiaStr[key] = { os: [], progs: [] };
+    eventosPorDiaStr[key].os.push(o);
+  });
+  programacoes.forEach(p => {
+    if (!p.data) return;
+    const dt = new Date(p.data);
+    if (dt.getFullYear() === anoVis && dt.getMonth() + 1 === mesVis) {
+      const key = dt.toDateString();
+      if (!eventosPorDiaStr[key]) eventosPorDiaStr[key] = { os: [], progs: [] };
+      eventosPorDiaStr[key].progs.push(p);
+    }
   });
 
-  const enviarWhatsApp = (data, osNoDia, progs) => {
-    const dataStr = data.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
-    let msg = `🚚 *PROGRAMAÇÃO LEGACY MOVING*\n📅 ${dataStr}\n━━━━━━━━━━━━━━━━━\n\n`;
-    osNoDia.forEach((o, i) => {
-      msg += `*${i + 1}. OS ${o.numero || ''}*\n`;
-      msg += `👤 Cliente: ${o.cliente || '—'}\n`;
-      if (o.endereco_origem) msg += `📍 Origem: ${o.endereco_origem}\n`;
-      if (o.endereco_destino) msg += `📍 Destino: ${o.endereco_destino}\n`;
-      if (o.equipe) msg += `👥 Equipe: ${o.equipe}\n`;
-      if (o.veiculo) msg += `🚛 Veículo: ${o.veiculo}\n`;
-      if (o.hora_inicio) msg += `⏰ Início: ${o.hora_inicio}\n`;
-      msg += '\n';
-    });
-    progs.forEach((p, i) => {
-      msg += `*${osNoDia.length + i + 1}. ${p.cliente || '—'}*\n`;
-      if (p.equipe) msg += `👥 Equipe: ${p.equipe}\n`;
-      if (p.veiculo) msg += `🚛 Veículo: ${p.veiculo}\n`;
-      msg += '\n';
-    });
-    msg += `━━━━━━━━━━━━━━━━━\n✅ Legacy Moving — Equipe Operacional`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-  };
+  /* ── KPI totais mês ─────────────────────────────────────────────────────── */
+  const totalOsMes   = osDoMes.length;
+  const progsMesAll  = programacoes.filter(p => {
+    if (!p.data) return false;
+    const dt = new Date(p.data);
+    return dt.getFullYear() === anoVis && dt.getMonth() + 1 === mesVis;
+  });
 
   if (loading) return <Spinner />;
-  if (error) return <Erro msg={error} onRetry={carregar} />;
+  if (error)   return <Erro msg={error} onRetry={carregar} />;
 
   return (
     <div style={{ padding: '24px', background: '#f8f9fa', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+
+      {/* ── Cabeçalho ─────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
         <div>
-          <h1 style={{ fontSize: '22px', fontWeight: '600', color: '#1a1a1a', margin: '0 0 4px' }}>Programação de Equipe</h1>
-          <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>
-            Visão semanal · {programacoes.length} alocações · {osSemana.length} OS na semana
+          <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1a1a1a', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Calendar size={20} color="#0f1f3d" /> Programação de Equipe
+          </h1>
+          <p style={{ color: '#6b7280', fontSize: '13px', margin: 0 }}>
+            {viewMode === 'mes'
+              ? `${MESES_PT[mesVis - 1]} ${anoVis} · ${totalOsMes} OS · ${progsMesAll.length} alocações`
+              : `Semana ${semana} de ${ano} · ${osSemana.length} OS · ${programacoes.length} alocações`
+            }
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Toggle de visualização */}
+          <div style={{ display: 'flex', background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+            {['semana', 'mes'].map(v => (
+              <button key={v} onClick={() => setViewMode(v)}
+                style={{ padding: '8px 14px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '600',
+                  background: viewMode === v ? '#0f1f3d' : 'transparent',
+                  color:      viewMode === v ? 'white'   : '#374151' }}>
+                {v === 'semana' ? '📅 Semana' : '📆 Mês'}
+              </button>
+            ))}
+          </div>
           <button onClick={sincronizar} disabled={sincronizando}
-            title="Sincroniza automaticamente as OS com datas para a programação"
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 14px', background: 'white', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', opacity: sincronizando ? 0.6 : 1 }}>
             <RefreshCw size={13} /> {sincronizando ? 'Sincronizando...' : 'Sincronizar OS'}
           </button>
           <button onClick={() => abrir()}
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '600' }}>
             <Plus size={14} /> Nova Alocação
           </button>
         </div>
       </div>
 
-      <div style={{ background: 'white', borderRadius: '10px', padding: '14px 20px', border: '0.5px solid #e5e7eb', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <button onClick={semanaAnterior} style={{ padding: '6px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
-        <span style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>Semana {semana} de {ano}</span>
-        <button onClick={semanaSeguinte} style={{ padding: '6px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronRight size={16} /></button>
-        <span style={{ fontSize: '12px', color: '#9ca3af' }}>
-          {datas[0].toLocaleDateString('pt-BR')} — {datas[5].toLocaleDateString('pt-BR')}
-        </span>
+      {/* ── Barra de navegação ────────────────────────────────────────────── */}
+      <div style={{ background: 'white', borderRadius: '10px', padding: '12px 20px', border: '0.5px solid #e5e7eb', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {viewMode === 'semana' ? (
+          <>
+            <button onClick={semanaAnterior} style={{ padding: '5px 8px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a1a', minWidth: 130 }}>Semana {semana} de {ano}</span>
+            <button onClick={semanaSeguinte} style={{ padding: '5px 8px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronRight size={16} /></button>
+            <span style={{ fontSize: '12px', color: '#9ca3af' }}>
+              {datasSemanais[0].toLocaleDateString('pt-BR')} — {datasSemanais[5].toLocaleDateString('pt-BR')}
+            </span>
+          </>
+        ) : (
+          <>
+            <button onClick={mesAnterior} style={{ padding: '5px 8px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
+            <span style={{ fontSize: '15px', fontWeight: '700', color: '#1a1a1a', minWidth: 180 }}>
+              {MESES_PT[mesVis - 1]} {anoVis}
+            </span>
+            <button onClick={mesSeguinte} style={{ padding: '5px 8px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}><ChevronRight size={16} /></button>
+            {/* KPIs rápidos do mês */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '16px' }}>
+              {[
+                { label: 'OS no mês', value: totalOsMes, color: '#c2410c', bg: '#fff7ed' },
+                { label: 'Alocações',  value: progsMesAll.length, color: '#1d4ed8', bg: '#eff6ff' },
+                { label: 'Dias com mov.', value: Object.keys(eventosPorDiaStr).length, color: '#15803d', bg: '#f0fdf4' },
+              ].map(k => (
+                <div key={k.label} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: k.bg, borderRadius: '8px' }}>
+                  <span style={{ fontSize: '15px', fontWeight: '800', color: k.color }}>{k.value}</span>
+                  <span style={{ fontSize: '11px', color: k.color, opacity: 0.8 }}>{k.label}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}>
-        {DIAS_SEMANA.map((dia, i) => {
-          const data = datas[i];
-          const progs = progsPorDia(data);
-          const osNoDia = osPorDia(data);
-          const isHoje = data.toDateString() === new Date().toDateString();
-          const totalNoDia = progs.length + osNoDia.length;
-          return (
-            <div key={dia} style={{ background: 'white', borderRadius: '10px', border: isHoje ? '1.5px solid #0f1f3d' : '0.5px solid #e5e7eb', overflow: 'hidden' }}>
-              <div style={{ padding: '10px 12px', background: isHoje ? '#0f1f3d' : '#f9fafb', borderBottom: '0.5px solid #e5e7eb' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <p style={{ fontSize: '12px', fontWeight: '600', color: isHoje ? 'white' : '#374151', margin: '0 0 2px' }}>{dia}</p>
-                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    {totalNoDia > 0 && (
-                      <span style={{ fontSize: '10px', fontWeight: '700', background: isHoje ? 'rgba(255,255,255,0.2)' : '#0f1f3d', color: 'white', borderRadius: '10px', padding: '1px 6px' }}>
-                        {totalNoDia}
-                      </span>
-                    )}
-                    {totalNoDia > 0 && (
+      {/* ════════════════════════════════════════════════════════════════════
+          VISÃO SEMANAL
+      ════════════════════════════════════════════════════════════════════ */}
+      {viewMode === 'semana' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}>
+          {DIAS_SEMANA_LONGO.map((dia, i) => {
+            const data     = datasSemanais[i];
+            const progs    = progsPorDia(data);
+            const osNoDia  = osPorDia(data);
+            const isHoje   = data.toDateString() === new Date().toDateString();
+            const totalNoDia = progs.length + osNoDia.length;
+            return (
+              <div key={dia} style={{ background: 'white', borderRadius: '10px', border: isHoje ? '1.5px solid #0f1f3d' : '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ padding: '10px 12px', background: isHoje ? '#0f1f3d' : '#f9fafb', borderBottom: '0.5px solid #e5e7eb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <p style={{ fontSize: '12px', fontWeight: '600', color: isHoje ? 'white' : '#374151', margin: '0 0 2px' }}>{dia}</p>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      {totalNoDia > 0 && (
+                        <span style={{ fontSize: '10px', fontWeight: '700', background: isHoje ? 'rgba(255,255,255,0.2)' : '#0f1f3d', color: 'white', borderRadius: '10px', padding: '1px 6px' }}>
+                          {totalNoDia}
+                        </span>
+                      )}
+                      {totalNoDia > 0 && (
+                        <button onClick={() => enviarWhatsApp(data, osNoDia, progs)} title="Enviar via WhatsApp"
+                          style={{ padding: '2px 4px', background: '#25d366', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                          <Share2 size={9} color="white" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '11px', color: isHoje ? 'rgba(255,255,255,0.6)' : '#9ca3af', margin: 0 }}>
+                    {data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                  </p>
+                </div>
+                <div style={{ padding: '8px', minHeight: '80px' }}>
+                  {osNoDia.map(o => (
+                    <div key={`os-${o.id}`} style={{ background: '#fff7ed', borderRadius: '6px', padding: '8px', marginBottom: '6px', border: '1px solid #fed7aa' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                        <Truck size={10} color="#c2410c" />
+                        <p style={{ fontSize: '10px', fontWeight: '700', color: '#c2410c', margin: 0 }}>OS {o.numero}</p>
+                      </div>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: '#92400e', margin: '0 0 2px' }}>{o.cliente}</p>
+                      {o.equipe  && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 1px' }}>👥 {o.equipe}</p>}
+                      {o.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {o.veiculo}</p>}
+                      {o.hora_inicio && <p style={{ fontSize: '10px', color: '#9ca3af', margin: '2px 0 0' }}>⏰ {o.hora_inicio}</p>}
+                    </div>
+                  ))}
+                  {progs.map(p => (
+                    <div key={p.id} style={{ background: '#f0f4ff', borderRadius: '6px', padding: '8px', marginBottom: '6px', border: '1px solid #dbeafe' }}>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: '#1e40af', margin: '0 0 2px' }}>{p.cliente}</p>
+                      {p.equipe  && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>👥 {p.equipe}</p>}
+                      {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {p.veiculo}</p>}
+                      <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                        <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={11} /></button>
+                        <button onClick={() => deletar(p.id)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={11} /></button>
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={() => abrir(null, `${isoDate(data)}T08:00`)}
+                    style={{ width: '100%', padding: '5px', background: 'none', border: '1px dashed #d1d5db', borderRadius: '6px', fontSize: '11px', color: '#9ca3af', cursor: 'pointer' }}>
+                    + Add
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          VISÃO MENSAL
+      ════════════════════════════════════════════════════════════════════ */}
+      {viewMode === 'mes' && (
+        <div style={{ background: 'white', borderRadius: '12px', border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+          {/* Cabeçalho dias da semana */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid #e5e7eb' }}>
+            {DIAS_SEMANA_CURTO.map(d => (
+              <div key={d} style={{ padding: '10px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em', background: '#f9fafb' }}>
+                {d}
+              </div>
+            ))}
+          </div>
+
+          {/* Grade de dias */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+            {gridMes.map((data, idx) => {
+              const doMes     = data.getMonth() + 1 === mesVis && data.getFullYear() === anoVis;
+              const isHoje    = data.toDateString() === new Date().toDateString();
+              const eventos   = eventosPorDiaStr[data.toDateString()] || { os: [], progs: [] };
+              const totalDia  = eventos.os.length + eventos.progs.length;
+              const showBorder = idx % 7 !== 6; // not last column
+              const showBorderBottom = idx < gridMes.length - 7;
+              return (
+                <div key={idx} style={{
+                  minHeight: '110px',
+                  borderRight:  showBorder       ? '1px solid #f3f4f6' : 'none',
+                  borderBottom: showBorderBottom ? '1px solid #f3f4f6' : 'none',
+                  background:   isHoje ? '#eff6ff' : (doMes ? 'white' : '#fafafa'),
+                  padding: '6px',
+                  cursor: 'pointer',
+                  transition: 'background 0.1s',
+                }}
+                  onMouseEnter={e => { if (!isHoje && doMes) e.currentTarget.style.background = '#f9fafb'; }}
+                  onMouseLeave={e => { if (!isHoje && doMes) e.currentTarget.style.background = doMes ? 'white' : '#fafafa'; }}
+                  onClick={() => abrir(null, `${isoDate(data)}T08:00`)}
+                >
+                  {/* Número do dia */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                    <span style={{
+                      fontSize: '13px', fontWeight: isHoje ? '800' : '600',
+                      color: isHoje ? 'white' : (doMes ? '#1a1a1a' : '#c4c4c4'),
+                      background: isHoje ? '#2563eb' : 'transparent',
+                      borderRadius: '50%', width: '24px', height: '24px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                      {data.getDate()}
+                    </span>
+                    {totalDia > 0 && doMes && (
                       <button
-                        onClick={() => enviarWhatsApp(data, osNoDia, progs)}
-                        title="Enviar programação do dia via WhatsApp"
-                        style={{ padding: '2px 4px', background: '#25d366', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                        <Share2 size={9} color="white" />
+                        onClick={e => { e.stopPropagation(); enviarWhatsApp(data, eventos.os, eventos.progs); }}
+                        title="Enviar via WhatsApp"
+                        style={{ padding: '2px 3px', background: '#25d366', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                        <Share2 size={8} color="white" />
                       </button>
                     )}
                   </div>
-                </div>
-                <p style={{ fontSize: '11px', color: isHoje ? 'rgba(255,255,255,0.6)' : '#9ca3af', margin: 0 }}>{data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</p>
-              </div>
-              <div style={{ padding: '8px', minHeight: '80px' }}>
-                {/* OS do dia (origem: data_mudanca) */}
-                {osNoDia.map(o => (
-                  <div key={`os-${o.id}`} style={{ background: '#fff7ed', borderRadius: '6px', padding: '8px', marginBottom: '6px', border: '1px solid #fed7aa' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      <Truck size={10} color="#c2410c" />
-                      <p style={{ fontSize: '10px', fontWeight: '700', color: '#c2410c', margin: 0 }}>OS {o.numero}</p>
-                    </div>
-                    <p style={{ fontSize: '12px', fontWeight: '600', color: '#92400e', margin: '0 0 2px' }}>{o.cliente}</p>
-                    {o.equipe && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 1px' }}>👥 {o.equipe}</p>}
-                    {o.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {o.veiculo}</p>}
-                    {o.hora_inicio && <p style={{ fontSize: '10px', color: '#9ca3af', margin: '2px 0 0' }}>⏰ {o.hora_inicio}</p>}
-                  </div>
-                ))}
-                {/* Alocações manuais */}
-                {progs.map(p => (
-                  <div key={p.id} style={{ background: '#f0f4ff', borderRadius: '6px', padding: '8px', marginBottom: '6px', border: '1px solid #dbeafe' }}>
-                    <p style={{ fontSize: '12px', fontWeight: '600', color: '#1e40af', margin: '0 0 2px' }}>{p.cliente}</p>
-                    {p.equipe && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>👥 {p.equipe}</p>}
-                    {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {p.veiculo}</p>}
-                    <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                      <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={11} /></button>
-                      <button onClick={() => deletar(p.id)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={11} /></button>
-                    </div>
-                  </div>
-                ))}
-                <button onClick={() => abrir(null, `${data.getFullYear()}-${String(data.getMonth()+1).padStart(2,'0')}-${String(data.getDate()).padStart(2,'0')}T08:00`)}
-                  style={{ width: '100%', padding: '5px', background: 'none', border: '1px dashed #d1d5db', borderRadius: '6px', fontSize: '11px', color: '#9ca3af', cursor: 'pointer' }}>
-                  + Add
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
 
+                  {/* Eventos do dia */}
+                  {doMes && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      {eventos.os.slice(0, 3).map(o => (
+                        <div key={`m-os-${o.id}`} onClick={e => e.stopPropagation()}
+                          style={{ background: '#fff7ed', borderRadius: '4px', padding: '2px 5px', border: '1px solid #fed7aa', display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden' }}>
+                          <Truck size={8} color="#c2410c" style={{ flexShrink: 0 }} />
+                          <span style={{ fontSize: '10px', fontWeight: '600', color: '#92400e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {o.cliente}
+                          </span>
+                        </div>
+                      ))}
+                      {eventos.progs.slice(0, Math.max(0, 3 - eventos.os.length)).map(p => (
+                        <div key={`m-p-${p.id}`} onClick={e => { e.stopPropagation(); abrir(p); }}
+                          style={{ background: '#f0f4ff', borderRadius: '4px', padding: '2px 5px', border: '1px solid #dbeafe', display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden', cursor: 'pointer' }}>
+                          <span style={{ fontSize: '10px', fontWeight: '600', color: '#1e40af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {p.cliente}
+                          </span>
+                        </div>
+                      ))}
+                      {totalDia > 3 && (
+                        <span style={{ fontSize: '9px', color: '#6b7280', fontWeight: '600', paddingLeft: '2px' }}>
+                          +{totalDia - 3} mais
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Legenda */}
+          <div style={{ padding: '10px 16px', background: '#f9fafb', borderTop: '1px solid #f3f4f6', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600' }}>Legenda:</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '12px', height: '12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '3px' }} />
+              <span style={{ fontSize: '11px', color: '#6b7280' }}>OS agendada</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '12px', height: '12px', background: '#f0f4ff', border: '1px solid #dbeafe', borderRadius: '3px' }} />
+              <span style={{ fontSize: '11px', color: '#6b7280' }}>Alocação manual</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '12px', height: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '3px' }} />
+              <span style={{ fontSize: '11px', color: '#6b7280' }}>Hoje</span>
+            </div>
+            <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: 'auto' }}>Clique num dia para adicionar alocação</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal alocação ──────────────────────────────────────────────────── */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '440px', maxWidth: '90vw' }}>
@@ -260,13 +488,14 @@ const Programacao = () => {
               </div>
             ))}
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data/hora</label>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data / hora</label>
               <input type="datetime-local" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} style={inputStyle} />
             </div>
             {erroForm && <p style={{ color: '#dc2626', fontSize: '13px' }}>{erroForm}</p>}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
               <button onClick={() => setShowModal(false)} style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', background: 'white' }}>Cancelar</button>
-              <button onClick={salvar} disabled={salvando} style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
+              <button onClick={salvar} disabled={salvando}
+                style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500', opacity: salvando ? 0.7 : 1 }}>
                 {salvando ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
@@ -277,10 +506,12 @@ const Programacao = () => {
   );
 };
 
+/* ── Helpers de UI ─────────────────────────────────────────────────────────── */
 const Spinner = () => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-    <div style={{ width: '32px', height: '32px', border: '3px solid #e5e7eb', borderTop: '3px solid #0f1f3d', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', flexDirection: 'column', gap: '12px' }}>
+    <div style={{ width: '32px', height: '32px', border: '3px solid #e5e7eb', borderTop: '3px solid #0f1f3d', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    <p style={{ color: '#9ca3af', fontSize: '13px', margin: 0 }}>Carregando programação...</p>
   </div>
 );
 

@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DollarSign, TrendingUp, TrendingDown, AlertCircle, ChevronLeft, ChevronRight, BarChart2 } from 'lucide-react';
+import { DollarSign, TrendingUp, TrendingDown, AlertCircle, ChevronLeft, ChevronRight, BarChart2, Printer, Share2, Mail, Download } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, LineChart, Line,
 } from 'recharts';
 import { api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const pct = (v) => `${(v || 0).toFixed(1)}%`;
 
 const FechamentoFinanceiro = () => {
   const now = new Date();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [mes, setMes] = useState(now.getMonth() + 1);
   const [ano, setAno] = useState(now.getFullYear());
   const [dados, setDados] = useState(null);
@@ -42,6 +45,52 @@ const FechamentoFinanceiro = () => {
     else setMes(m => m + 1);
   };
 
+  const handleImprimir = () => {
+    window.print();
+  };
+
+  const handleExportar = () => {
+    const d = dados || {};
+    const linhas = [
+      ['Fechamento Mensal — Legacy Moving'],
+      [`Período: ${mesesNomes[mes - 1]} ${ano}`],
+      [],
+      ['Indicador', 'Valor'],
+      ['Receita Total', fmt(d.receita_total)],
+      ['  Mudanças', fmt(d.receita_mudancas)],
+      ['  Guarda-Móveis', fmt(d.receita_guarda_moveis)],
+      ['Total Despesas', fmt(d.total_despesas)],
+      ['Lucro Líquido', fmt(d.lucro_liquido)],
+      ['Margem', `${(d.margem_percentual || 0).toFixed(1)}%`],
+      ['Mudanças realizadas', d.mudancas_realizadas || 0],
+    ];
+    const csv = linhas.map(r => r.join(';')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `fechamento-${mesesNomes[mes - 1]}-${ano}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const handleWhatsApp = () => {
+    const d = dados || {};
+    const texto = [
+      `📊 *FECHAMENTO MENSAL — LEGACY MOVING*`,
+      `📅 *${mesesNomes[mes - 1]}/${ano}*`,
+      `━━━━━━━━━━━━━━━━━━`,
+      `💰 *Receita Total:* ${fmt(d.receita_total)}`,
+      `   • Mudanças: ${fmt(d.receita_mudancas)}`,
+      `   • Guarda-Móveis: ${fmt(d.receita_guarda_moveis)}`,
+      `📉 *Total Despesas:* ${fmt(d.total_despesas)}`,
+      ``,
+      `✅ *Lucro Líquido:* ${fmt(d.lucro_liquido)}`,
+      `📈 *Margem:* ${(d.margem_percentual || 0).toFixed(1)}%`,
+      ``,
+      `🚚 *Mudanças realizadas:* ${d.mudancas_realizadas || 0}`,
+    ].join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
+  };
+
   const mesesNomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
   if (loading) return <Spinner />;
@@ -57,10 +106,30 @@ const FechamentoFinanceiro = () => {
           <h1 style={{ fontSize: '22px', fontWeight: '600', color: '#1a1a1a', margin: '0 0 4px' }}>Fechamento Mensal</h1>
           <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>Resumo financeiro consolidado</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button onClick={mesAnterior} style={{ padding: '7px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '7px', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
-          <span style={{ fontSize: '15px', fontWeight: '600', color: '#1a1a1a', minWidth: '140px', textAlign: 'center' }}>{mesesNomes[mes - 1]} {ano}</span>
-          <button onClick={mesSeguinte} style={{ padding: '7px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '7px', cursor: 'pointer' }}><ChevronRight size={16} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button onClick={mesAnterior} style={{ padding: '7px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '7px', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
+            <span style={{ fontSize: '15px', fontWeight: '600', color: '#1a1a1a', minWidth: '140px', textAlign: 'center' }}>{mesesNomes[mes - 1]} {ano}</span>
+            <button onClick={mesSeguinte} style={{ padding: '7px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '7px', cursor: 'pointer' }}><ChevronRight size={16} /></button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleWhatsApp}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#25d366', color: 'white', border: 'none', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
+              <Share2 size={13} /> WhatsApp
+            </button>
+            {isAdmin && (
+              <button onClick={handleExportar}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
+                <Download size={13} /> Exportar
+              </button>
+            )}
+            {isAdmin && (
+              <button onClick={handleImprimir}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
+                <Printer size={13} /> Imprimir
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

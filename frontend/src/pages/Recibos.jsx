@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Receipt, Search, Plus, CheckCircle, Clock, X,
   Printer, Share2, Eye, Edit2, FileText
@@ -180,7 +181,7 @@ const ReciboVisual = ({ recibo, onClose }) => {
 };
 
 // ── Modal novo recibo ─────────────────────────────────────────────────────────
-const ModalNovoRecibo = ({ onClose, onSalvo }) => {
+const ModalNovoRecibo = ({ onClose, onSalvo, osPreId = '' }) => {
   const [form, setForm] = useState(EMPTY_FORM);
   const [osList, setOsList] = useState([]);
   const [salvando, setSalvando] = useState(false);
@@ -189,10 +190,27 @@ const ModalNovoRecibo = ({ onClose, onSalvo }) => {
 
   useEffect(() => {
     api.getOS({ limit: 200 })
-      .then(data => setOsList(Array.isArray(data) ? data : (data.items || [])))
+      .then(data => {
+        const lista = Array.isArray(data) ? data : (data.items || []);
+        setOsList(lista);
+        // Auto-preenche se veio da OS
+        if (osPreId) {
+          const os = lista.find(o => String(o.id) === String(osPreId));
+          if (os) {
+            setForm(f => ({
+              ...f,
+              os_id: String(os.id),
+              cliente: os.cliente || '',
+              cliente_id: os.cliente_id || '',
+              servico_realizado: `Serviço de mudança ${os.tipo_servico ? '(' + os.tipo_servico + ')' : ''} — ${os.endereco_origem || ''} → ${os.endereco_destino || ''}`.trim(),
+              valor_cobrado: String(os.valor_total || ''),
+            }));
+          }
+        }
+      })
       .catch(() => setOsList([]))
       .finally(() => setCarregandoOS(false));
-  }, []);
+  }, [osPreId]); // eslint-disable-line
 
   const selecionarOS = (osId) => {
     if (!osId) { setForm({ ...form, os_id: '', cliente: '', cliente_id: '', servico_realizado: '', valor_cobrado: '' }); return; }
@@ -304,9 +322,16 @@ const ModalNovoRecibo = ({ onClose, onSalvo }) => {
             </div>
             <div>
               <label style={labelStyle}>Forma de Pagamento</label>
-              <select value={form.forma_pagamento} onChange={e => setForm({ ...form, forma_pagamento: e.target.value })} style={inputStyle}>
-                {FORMAS_PAGAMENTO.map(fp => <option key={fp} value={fp}>{FORMAS_LABEL[fp]}</option>)}
-              </select>
+              <input
+                value={form.forma_pagamento}
+                onChange={e => setForm({ ...form, forma_pagamento: e.target.value })}
+                placeholder="Ex: 50% cartão e 50% PIX"
+                style={inputStyle}
+                list="formas-pagamento-novo"
+              />
+              <datalist id="formas-pagamento-novo">
+                {FORMAS_PAGAMENTO.map(fp => <option key={fp} value={FORMAS_LABEL[fp]} />)}
+              </datalist>
             </div>
           </div>
 
@@ -351,13 +376,25 @@ const ModalNovoRecibo = ({ onClose, onSalvo }) => {
 
 // ── Página principal ──────────────────────────────────────────────────────────
 const Recibos = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [recibos, setRecibos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [showNovo, setShowNovo] = useState(false);
+  const [osPreId, setOsPreId] = useState('');
   const [reciboVisual, setReciboVisual] = useState(null);
+
+  // Auto-abre modal se veio de uma OS (ex: /recibos?os_id=123)
+  useEffect(() => {
+    const id = searchParams.get('os_id');
+    if (id) {
+      setOsPreId(id);
+      setShowNovo(true);
+      setSearchParams({}, { replace: true }); // limpa a URL
+    }
+  }, []); // eslint-disable-line
 
   // Modal confirmar recebimento
   const [modalReceber, setModalReceber] = useState(null);
@@ -538,9 +575,17 @@ const Recibos = () => {
               {erroForm && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', color: '#dc2626', fontSize: '13px', marginBottom: '16px' }}>{erroForm}</div>}
               <div style={{ marginBottom: '16px' }}>
                 <label style={labelStyle}>Forma de Pagamento *</label>
-                <select value={formReceber.forma_pagamento} onChange={e => setFormReceber(f => ({ ...f, forma_pagamento: e.target.value }))} style={inputStyle}>
-                  {FORMAS_PAGAMENTO.map(fp => <option key={fp} value={fp}>{FORMAS_LABEL[fp]}</option>)}
-                </select>
+                <input
+                  value={formReceber.forma_pagamento}
+                  onChange={e => setFormReceber(f => ({ ...f, forma_pagamento: e.target.value }))}
+                  placeholder="Ex: 50% cartão e 50% PIX"
+                  style={inputStyle}
+                  list="formas-pagamento-receber"
+                />
+                <datalist id="formas-pagamento-receber">
+                  {FORMAS_PAGAMENTO.map(fp => <option key={fp} value={FORMAS_LABEL[fp]} />)}
+                </datalist>
+                <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#9ca3af' }}>Selecione uma sugestão ou digite livremente (ex: "50% cartão e 50% PIX")</p>
               </div>
               <div>
                 <label style={labelStyle}>Data do Pagamento</label>
@@ -561,7 +606,7 @@ const Recibos = () => {
       )}
 
       {/* Modal novo recibo */}
-      {showNovo && <ModalNovoRecibo onClose={() => setShowNovo(false)} onSalvo={carregar} />}
+      {showNovo && <ModalNovoRecibo onClose={() => { setShowNovo(false); setOsPreId(''); }} onSalvo={carregar} osPreId={osPreId} />}
 
       {/* Recibo visual */}
       {reciboVisual && <ReciboVisual recibo={reciboVisual} onClose={() => setReciboVisual(null)} />}

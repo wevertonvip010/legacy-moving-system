@@ -1,14 +1,30 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Archive, Plus, Search, X, AlertCircle } from 'lucide-react';
+import { Archive, Plus, Search, X, AlertCircle, History } from 'lucide-react';
 import { api } from '../lib/api';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
-const STATUS_LABEL = { ocupado: 'Ocupado', livre: 'Livre', manutencao: 'Manutenção' };
+const STATUS_LABEL = { ocupado: 'Ocupado', livre: 'Livre', manutencao: 'Manutenção', bloqueado: 'Bloqueado' };
 const STATUS_COLOR = {
   ocupado: { bg: '#fef2f2', text: '#dc2626', border: '#fecaca' },
   livre: { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' },
   manutencao: { bg: '#fff7ed', text: '#ea580c', border: '#fed7aa' },
+  bloqueado: { bg: '#f5f3ff', text: '#7c3aed', border: '#ddd6fe' },
+};
+
+const TIPO_EVENTO_LABEL = {
+  entrada: 'Entrada',
+  saida: 'Saída',
+  troca_cliente: 'Troca de Cliente',
+  renovacao: 'Renovação',
+  encerramento: 'Encerramento',
+  manutencao: 'Manutenção',
+  liberacao: 'Liberação',
+};
+const TIPO_EVENTO_COLOR = {
+  entrada: '#16a34a', saida: '#dc2626', troca_cliente: '#7c3aed',
+  renovacao: '#2563eb', encerramento: '#ea580c', manutencao: '#f59e0b', liberacao: '#10b981',
 };
 
 const GuardaMoveis = () => {
@@ -25,6 +41,15 @@ const GuardaMoveis = () => {
   const [novoBoxNumero, setNovoBoxNumero] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erroForm, setErroForm] = useState('');
+
+  // Histórico de eventos
+  const [showHistorico, setShowHistorico] = useState(false);
+  const [boxHistorico, setBoxHistorico] = useState(null);
+  const [eventos, setEventos] = useState([]);
+  const [loadingEventos, setLoadingEventos] = useState(false);
+  const [showNovoEvento, setShowNovoEvento] = useState(false);
+  const [formEvento, setFormEvento] = useState({ tipo: 'entrada', cliente_nome: '', valor_mensal: '', observacoes: '', data_saida_prevista: '' });
+  const [salvandoEvento, setSalvandoEvento] = useState(false);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -84,6 +109,44 @@ const GuardaMoveis = () => {
       setErroForm(e.message);
     } finally {
       setSalvando(false);
+    }
+  };
+
+  const abrirHistorico = async (box) => {
+    setBoxHistorico(box);
+    setShowHistorico(true);
+    setShowNovoEvento(false);
+    setLoadingEventos(true);
+    try {
+      const data = await api.getBoxHistorico(box.id);
+      setEventos(data);
+    } catch {
+      setEventos([]);
+    } finally {
+      setLoadingEventos(false);
+    }
+  };
+
+  const salvarEvento = async () => {
+    if (!formEvento.tipo) return;
+    setSalvandoEvento(true);
+    try {
+      await api.createBoxEvento(boxHistorico.id, {
+        tipo: formEvento.tipo,
+        cliente_nome: formEvento.cliente_nome || undefined,
+        valor_mensal: formEvento.valor_mensal ? parseFloat(formEvento.valor_mensal) : undefined,
+        observacoes: formEvento.observacoes || undefined,
+        data_saida_prevista: formEvento.data_saida_prevista || undefined,
+      });
+      setShowNovoEvento(false);
+      setFormEvento({ tipo: 'entrada', cliente_nome: '', valor_mensal: '', observacoes: '', data_saida_prevista: '' });
+      // Recarregar histórico e boxes
+      const [evData] = await Promise.all([api.getBoxHistorico(boxHistorico.id), carregar()]);
+      setEventos(evData);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setSalvandoEvento(false);
     }
   };
 
@@ -219,6 +282,11 @@ const GuardaMoveis = () => {
                     Liberar
                   </button>
                 )}
+                <button onClick={() => abrirHistorico(box)}
+                  title="Ver histórico de eventos"
+                  style={{ padding: '7px 8px', background: '#f0f4ff', color: '#2563eb', border: '1px solid #dbeafe', borderRadius: '7px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <History size={11} />
+                </button>
               </div>
             </div>
           );
@@ -320,6 +388,127 @@ const GuardaMoveis = () => {
                 style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
                 {salvando ? 'Salvando...' : 'Confirmar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Painel de Histórico */}
+      {showHistorico && boxHistorico && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', borderRadius: '14px', width: '560px', maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Header */}
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: '#1a1a1a' }}>
+                  <History size={15} style={{ marginRight: '8px', verticalAlign: 'middle', color: '#2563eb' }} />
+                  Histórico — {boxHistorico.numero}
+                </h3>
+                <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#9ca3af' }}>
+                  {boxHistorico.localizacao ? `📍 ${boxHistorico.localizacao} · ` : ''}
+                  {boxHistorico.metros_quadrados ? `${boxHistorico.metros_quadrados} m²` : ''}
+                  {boxHistorico.metros_cubicos ? ` · ${boxHistorico.metros_cubicos} m³` : ''}
+                </p>
+              </div>
+              <button onClick={() => setShowHistorico(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={18} /></button>
+            </div>
+
+            {/* Ação: Registrar evento */}
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
+              {!showNovoEvento ? (
+                <button onClick={() => setShowNovoEvento(true)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 14px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
+                  <Plus size={13} /> Registrar Evento
+                </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '3px' }}>Tipo de evento</label>
+                      <select value={formEvento.tipo} onChange={e => setFormEvento({ ...formEvento, tipo: e.target.value })}
+                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', outline: 'none' }}>
+                        {Object.entries(TIPO_EVENTO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '3px' }}>Cliente</label>
+                      <input value={formEvento.cliente_nome} onChange={e => setFormEvento({ ...formEvento, cliente_nome: e.target.value })}
+                        placeholder="Nome do cliente"
+                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '3px' }}>Valor mensal (R$)</label>
+                      <input type="number" value={formEvento.valor_mensal} onChange={e => setFormEvento({ ...formEvento, valor_mensal: e.target.value })}
+                        placeholder="0.00"
+                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '3px' }}>Saída prevista</label>
+                      <input type="date" value={formEvento.data_saida_prevista} onChange={e => setFormEvento({ ...formEvento, data_saida_prevista: e.target.value })}
+                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={{ fontSize: '12px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '3px' }}>Observações</label>
+                      <input value={formEvento.observacoes} onChange={e => setFormEvento({ ...formEvento, observacoes: e.target.value })}
+                        placeholder="Observações opcionais..."
+                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => setShowNovoEvento(false)}
+                      style={{ padding: '7px 14px', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '13px', cursor: 'pointer', background: 'white' }}>
+                      Cancelar
+                    </button>
+                    <button onClick={salvarEvento} disabled={salvandoEvento}
+                      style={{ padding: '7px 14px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' }}>
+                      {salvandoEvento ? 'Registrando...' : 'Registrar'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Timeline de eventos */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+              {loadingEventos ? (
+                <div style={{ textAlign: 'center', padding: '32px', color: '#9ca3af' }}>Carregando histórico...</div>
+              ) : eventos.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '32px', color: '#9ca3af', fontSize: '14px' }}>
+                  Nenhum evento registrado ainda para este box.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                  {eventos.map((ev, i) => (
+                    <div key={ev.id} style={{ display: 'flex', gap: '14px' }}>
+                      {/* Linha de timeline */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                        <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: TIPO_EVENTO_COLOR[ev.tipo] || '#6b7280', marginTop: '4px', flexShrink: 0 }} />
+                        {i < eventos.length - 1 && (
+                          <div style={{ width: '2px', flex: 1, background: '#f3f4f6', margin: '4px 0' }} />
+                        )}
+                      </div>
+                      {/* Conteúdo */}
+                      <div style={{ flex: 1, paddingBottom: i < eventos.length - 1 ? '16px' : '0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: TIPO_EVENTO_COLOR[ev.tipo] || '#374151' }}>
+                            {TIPO_EVENTO_LABEL[ev.tipo] || ev.tipo}
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#9ca3af' }}>{fmtDate(ev.data_evento)}</span>
+                        </div>
+                        {ev.cliente_nome && (
+                          <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#374151' }}>Cliente: <strong>{ev.cliente_nome}</strong></p>
+                        )}
+                        {ev.valor_mensal > 0 && (
+                          <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#6b7280' }}>Valor: {fmt(ev.valor_mensal)}/mês</p>
+                        )}
+                        {ev.observacoes && (
+                          <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#9ca3af', fontStyle: 'italic' }}>{ev.observacoes}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
