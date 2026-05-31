@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { Bell, AlertTriangle, Package, Users, DollarSign, Truck, Target, X, CheckCircle } from 'lucide-react';
 import { api } from '../lib/api';
 
@@ -26,11 +26,27 @@ const Notificacoes = () => {
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const ref = useRef();
+  const btnRef = useRef();
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+
+  // Calcula posição do dropdown baseado no botão
+  useLayoutEffect(() => {
+    if (open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setDropPos({
+        top: rect.bottom + 8,
+        left: Math.min(rect.left, window.innerWidth - 400),
+      });
+    }
+  }, [open]);
 
   // Fecha ao clicar fora
   useEffect(() => {
     const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target) &&
+          btnRef.current && !btnRef.current.contains(e.target)) {
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -101,9 +117,10 @@ const Notificacoes = () => {
   const unread = notifs.length;
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <>
       {/* Botão sino */}
       <button
+        ref={btnRef}
         onClick={() => setOpen(o => !o)}
         style={{
           position: 'relative', padding: '8px', background: open ? 'rgba(255,255,255,0.15)' : 'transparent',
@@ -129,16 +146,18 @@ const Notificacoes = () => {
         )}
       </button>
 
-      {/* Dropdown */}
+      {/* Dropdown — posição fixa para não ser cortado pela sidebar */}
       {open && (
-        <div style={{
-          position: 'absolute', top: '100%', right: 0, marginTop: '8px',
+        <div ref={ref} style={{
+          position: 'fixed',
+          top: `${dropPos.top}px`,
+          left: `${Math.max(8, dropPos.left)}px`,
           width: '380px', maxHeight: '480px',
           background: 'white', borderRadius: '14px',
           boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 4px 20px rgba(0,0,0,0.08)',
           border: '1px solid #e5e7eb', overflow: 'hidden',
           animation: 'notifSlide 0.2s ease',
-          zIndex: 100,
+          zIndex: 9998,
         }}>
           {/* Header */}
           <div style={{
@@ -231,7 +250,7 @@ const Notificacoes = () => {
           to   { opacity: 1; transform: translateY(0); }
         }
       `}</style>
-    </div>
+    </>
   );
 };
 
