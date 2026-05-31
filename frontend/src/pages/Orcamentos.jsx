@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { Share2 } from 'lucide-react';
+import { Share2, Calculator } from 'lucide-react';
+import CalculadoraCubagem from '../components/CalculadoraCubagem';
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -67,6 +68,7 @@ export default function Orcamentos() {
   const [leads, setLeads]         = useState([]);
   const [clientes, setClientes]   = useState([]);
   const [buscaLead, setBuscaLead] = useState('');
+  const [showCalc, setShowCalc] = useState(false);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -486,6 +488,14 @@ export default function Orcamentos() {
               </Field>
             </div>
 
+            {/* Calculadora de cubagem */}
+            <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowCalc(true)} type="button"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 8, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                <Calculator size={14} /> Calculadora de Cubagem
+              </button>
+            </div>
+
             {/* Valores + Condições */}
             <p style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Valores e Condições</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 12, marginBottom: 14 }}>
@@ -549,6 +559,21 @@ export default function Orcamentos() {
             </div>
           </div>
         </Overlay>
+      )}
+      {/* Calculadora de cubagem */}
+      {showCalc && (
+        <CalculadoraCubagem
+          onClose={() => setShowCalc(false)}
+          onCubagemCalculada={(result) => {
+            setForm(f => ({
+              ...f,
+              valor_servico: String(result.valorSugerido),
+              observacoes_comerciais: (f.observacoes_comerciais ? f.observacoes_comerciais + '\n\n' : '') +
+                `📦 Cubagem: ${result.m3Total}m³ (${result.totalItens} itens)\n${result.resumo}`,
+            }));
+            setShowCalc(false);
+          }}
+        />
       )}
     </div>
   );

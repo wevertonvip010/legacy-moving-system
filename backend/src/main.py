@@ -3259,6 +3259,74 @@ def listar_turnos():
     } for t in turnos])
 
 
+# ── PORTAL DO CLIENTE (público, sem autenticação) ────────────────────────────
+import hashlib
+
+def _gerar_token_portal(os_id):
+    """Gera um token determinístico para a OS (baseado no ID + secret)."""
+    secret = app.config.get('JWT_SECRET_KEY', 'legacy')
+    raw = f"portal-{os_id}-{secret}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+@app.route('/api/portal/<token>', methods=['GET'])
+def portal_cliente(token):
+    """Endpoint público — retorna dados da OS pelo token do portal."""
+    # Encontra a OS cujo token bate
+    todas_os = OrdemServico.query.all()
+    os_ = None
+    for o in todas_os:
+        if _gerar_token_portal(o.id) == token:
+            os_ = o
+            break
+    if not os_:
+        return err("Link inválido ou expirado", 404)
+    return jsonify({
+        "os": {
+            "id": os_.id, "numero": os_.numero,
+            "cliente": os_.cliente,
+            "status": os_.status,
+            "data_mudanca": os_.data_mudanca.isoformat() if os_.data_mudanca else None,
+            "endereco_origem": os_.endereco_origem,
+            "endereco_destino": os_.endereco_destino,
+            "equipe": os_.equipe,
+            "veiculo": os_.veiculo,
+            "tipo_servico": os_.tipo_servico,
+        },
+        "token": token,
+    })
+
+
+@app.route('/api/portal/<token>/nps', methods=['POST'])
+def portal_nps(token):
+    """Recebe avaliação NPS do cliente."""
+    todas_os = OrdemServico.query.all()
+    os_ = None
+    for o in todas_os:
+        if _gerar_token_portal(o.id) == token:
+            os_ = o
+            break
+    if not os_:
+        return err("Link inválido", 404)
+    data = request.json or {}
+    nota = data.get('nota')
+    comentario = data.get('comentario', '')
+    # Salva como observação na OS
+    nps_text = f"\n[NPS {nota}/10] {comentario}" if comentario else f"\n[NPS {nota}/10]"
+    os_.observacoes_finais = (os_.observacoes_finais or '') + nps_text
+    db.session.commit()
+    return jsonify({"ok": True, "nota": nota})
+
+
+@app.route('/api/os/<int:id>/portal-link', methods=['GET'])
+@jwt_required()
+def gerar_link_portal(id):
+    """Gera o link do portal para enviar ao cliente."""
+    os_ = OrdemServico.query.get_or_404(id)
+    token = _gerar_token_portal(os_.id)
+    return jsonify({"token": token, "url": f"/acompanhar/{token}"})
+
+
 # ── INICIALIZAÇÃO ─────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

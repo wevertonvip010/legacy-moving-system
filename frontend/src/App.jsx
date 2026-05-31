@@ -25,6 +25,7 @@ import Configuracoes from './pages/Configuracoes';
 import Avarias from './pages/Avarias';
 import PainelExecutivo from './pages/PainelExecutivo';
 import Controladoria from './pages/Controladoria';
+import PortalCliente from './pages/PortalCliente';
 import './App.css';
 
 const PR = ({ children }) => (
@@ -38,6 +39,7 @@ function App() {
       <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/acompanhar/:token" element={<PortalCliente />} />
           <Route path="/dashboard"              element={<PR><Dashboard /></PR>} />
           <Route path="/leads"                  element={<PR><Leads /></PR>} />
           <Route path="/clientes"               element={<PR><Clientes /></PR>} />

@@ -139,6 +139,7 @@ export const api = {
   iniciarOS: (id) => req('POST', `/api/os/${id}/iniciar`),
   concluirOS: (id, data) => req('POST', `/api/os/${id}/concluir`, data),
   cancelarOS: (id) => req('POST', `/api/os/${id}/cancelar`),
+  getPortalLink: (id) => req('GET', `/api/os/${id}/portal-link`),
 
   // Programação
   getProgramacao: (params = {}) => {

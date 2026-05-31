@@ -319,6 +319,14 @@ const OrdensServico = () => {
                     {(o.status === 'finalizada' || o.status === 'concluida') && (
                       <button onClick={() => navigate(`/recibos?os_id=${o.id}`)} title="Gerar recibo para esta OS" style={{ padding: '5px', background: '#eff6ff', border: 'none', cursor: 'pointer', color: '#2563eb', borderRadius: '4px' }}><Receipt size={14} /></button>
                     )}
+                    <button onClick={async () => {
+                      try {
+                        const res = await api.getPortalLink(o.id);
+                        const url = `${window.location.origin}${res.url}`;
+                        navigator.clipboard.writeText(url).then(() => alert(`Link copiado!\n\n${url}`)).catch(() => alert(`Link do portal:\n\n${url}`));
+                      } catch (e) { alert('Erro: ' + e.message); }
+                    }} title="Copiar link de acompanhamento para o cliente"
+                      style={{ padding: '5px', background: '#f5f3ff', border: 'none', cursor: 'pointer', color: '#7c3aed', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }}>🔗</button>
                     <button onClick={() => abrir(o)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }} title="Editar OS"><Edit size={15} /></button>
                     <button onClick={() => deletar(o.id)} style={{ padding: '5px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={15} /></button>
                   </div>
