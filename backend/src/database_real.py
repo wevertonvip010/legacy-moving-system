@@ -319,12 +319,25 @@ class OrdemServico(db.Model):
         return self.data_mudanca
 
 
+# ── FUNCIONÁRIOS (banco de ajudantes) ──────────────────────────────────────
+class Funcionario(db.Model):
+    __tablename__ = 'funcionarios'
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(255), nullable=False)
+    funcoes = db.Column(db.String(500))       # Ex: "embalador,motorista,ajudante"
+    telefone = db.Column(db.String(30))
+    ativo = db.Column(db.Boolean, default=True)
+    observacoes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 # ── PROGRAMAÇÃO ─────────────────────────────────────────────────────────────
 class Programacao(db.Model):
     __tablename__ = 'programacoes'
     id = db.Column(db.Integer, primary_key=True)
     os_id = db.Column(db.Integer, db.ForeignKey('ordens_servico.id'), nullable=True)
     cliente = db.Column(db.String(255), nullable=False)
+    tipo_servico = db.Column(db.String(50), default='mudanca')  # mudanca, embalagem, icamento, transporte, etc
     data = db.Column(db.DateTime, nullable=True)
     equipe = db.Column(db.String(500))
     equipe_ids = db.Column(db.Text)        # JSON user IDs

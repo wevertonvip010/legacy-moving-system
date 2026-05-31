@@ -30,7 +30,7 @@ from database_real import (
     EtapaOperacional, FechamentoOperacional, Comissao,
     Avaria, UserActivityLog,
     Material, BoxEvento, AuditLog, Jornada, Turno,
-    RecorrenteFinanceiro, ConfigSistema,
+    RecorrenteFinanceiro, ConfigSistema, Funcionario,
     init_db
 )
 
@@ -1868,6 +1868,7 @@ def listar_programacao():
     items = query.order_by(Programacao.data).all()
     return jsonify([{
         "id": p.id, "os_id": p.os_id, "cliente": p.cliente,
+        "tipo_servico": p.tipo_servico or 'mudanca',
         "data": p.data.isoformat() if p.data else None,
         "equipe": p.equipe, "veiculo": p.veiculo,
         "status": p.status, "semana": p.semana, "ano": p.ano,
@@ -1904,6 +1905,7 @@ def criar_programacao():
             pass
     p = Programacao(
         os_id=data.get('os_id'), cliente=data['cliente'],
+        tipo_servico=data.get('tipo_servico', 'mudanca'),
         data=dt, equipe=data.get('equipe', ''), veiculo=data.get('veiculo', ''),
         status='agendado',
         semana=dt.isocalendar()[1] if dt else None,
@@ -1919,7 +1921,7 @@ def criar_programacao():
 def atualizar_programacao(id):
     p = Programacao.query.get_or_404(id)
     data = request.json or {}
-    for f in ['cliente', 'equipe', 'veiculo', 'status']:
+    for f in ['cliente', 'equipe', 'veiculo', 'status', 'tipo_servico']:
         if f in data:
             setattr(p, f, data[f])
     if 'data' in data and data['data']:
@@ -3257,6 +3259,61 @@ def listar_turnos():
         "total_acoes": t.total_acoes,
         "status": t.status,
     } for t in turnos])
+
+
+# ── FUNCIONÁRIOS ──────────────────────────────────────────────────────────────
+@app.route('/api/funcionarios', methods=['GET'])
+@jwt_required()
+def listar_funcionarios():
+    ativo = request.args.get('ativo', '1')
+    q = Funcionario.query
+    if ativo == '1':
+        q = q.filter_by(ativo=True)
+    funcs = q.order_by(Funcionario.nome).all()
+    return jsonify([{
+        "id": f.id, "nome": f.nome, "funcoes": f.funcoes,
+        "telefone": f.telefone, "ativo": f.ativo,
+        "observacoes": f.observacoes,
+    } for f in funcs])
+
+
+@app.route('/api/funcionarios', methods=['POST'])
+@require_role('admin', 'operacional')
+def criar_funcionario():
+    data = request.json or {}
+    if not data.get('nome'):
+        return err("Nome é obrigatório")
+    f = Funcionario(
+        nome=data['nome'],
+        funcoes=data.get('funcoes', ''),
+        telefone=data.get('telefone', ''),
+        observacoes=data.get('observacoes', ''),
+        ativo=data.get('ativo', True),
+    )
+    db.session.add(f)
+    db.session.commit()
+    return jsonify({"id": f.id, "nome": f.nome}), 201
+
+
+@app.route('/api/funcionarios/<int:id>', methods=['PUT'])
+@require_role('admin', 'operacional')
+def atualizar_funcionario(id):
+    f = Funcionario.query.get_or_404(id)
+    data = request.json or {}
+    for campo in ['nome', 'funcoes', 'telefone', 'observacoes', 'ativo']:
+        if campo in data:
+            setattr(f, campo, data[campo])
+    db.session.commit()
+    return jsonify({"id": f.id, "nome": f.nome, "funcoes": f.funcoes})
+
+
+@app.route('/api/funcionarios/<int:id>', methods=['DELETE'])
+@require_role('admin')
+def deletar_funcionario(id):
+    f = Funcionario.query.get_or_404(id)
+    db.session.delete(f)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 # ── PORTAL DO CLIENTE (público, sem autenticação) ────────────────────────────

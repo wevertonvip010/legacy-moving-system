@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, AlertTriangle, Package, Users, DollarSign, Truck, Target, X, CheckCircle } from 'lucide-react';
 import { api } from '../lib/api';
 
@@ -21,7 +22,13 @@ const tempoAtras = (iso) => {
   return `${Math.floor(diff/86400)}d`;
 };
 
+const LINK_MAP = {
+  lead: '/leads', estoque: '/estoque', avaria: '/avarias',
+  financeiro: '/orcamentos', os: '/ordens-servico', meta: '/metas',
+};
+
 const Notificacoes = () => {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -68,10 +75,10 @@ const Notificacoes = () => {
       if (dash.status === 'fulfilled') {
         const d = dash.value;
         if (d.leads_novos > 0) {
-          items.push({ tipo: 'lead', msg: `${d.leads_novos} lead${d.leads_novos > 1 ? 's' : ''} novo${d.leads_novos > 1 ? 's' : ''} aguardando contato`, ts: now, prioridade: 2 });
+          items.push({ tipo: 'lead', msg: `${d.leads_novos} lead${d.leads_novos > 1 ? 's' : ''} novo${d.leads_novos > 1 ? 's' : ''} aguardando contato`, ts: now, prioridade: 2, link: '/leads' });
         }
         if (d.orcamentos_abertos > 0) {
-          items.push({ tipo: 'financeiro', msg: `${d.orcamentos_abertos} orçamento${d.orcamentos_abertos > 1 ? 's' : ''} pendente${d.orcamentos_abertos > 1 ? 's' : ''} de aprovação`, ts: now, prioridade: 1 });
+          items.push({ tipo: 'financeiro', msg: `${d.orcamentos_abertos} orçamento${d.orcamentos_abertos > 1 ? 's' : ''} pendente${d.orcamentos_abertos > 1 ? 's' : ''} de aprovação`, ts: now, prioridade: 1, link: '/orcamentos' });
         }
       }
 
@@ -79,7 +86,7 @@ const Notificacoes = () => {
       if (avRes.status === 'fulfilled') {
         const av = avRes.value;
         if ((av.abertas || 0) > 0) {
-          items.push({ tipo: 'avaria', msg: `${av.abertas} avaria${av.abertas > 1 ? 's' : ''} aberta${av.abertas > 1 ? 's' : ''} requer${av.abertas > 1 ? 'em' : ''} atenção`, ts: now, prioridade: 3 });
+          items.push({ tipo: 'avaria', msg: `${av.abertas} avaria${av.abertas > 1 ? 's' : ''} aberta${av.abertas > 1 ? 's' : ''} requer${av.abertas > 1 ? 'em' : ''} atenção`, ts: now, prioridade: 3, link: '/avarias' });
         }
       }
 
@@ -89,10 +96,10 @@ const Notificacoes = () => {
         const criticos = est.alertas_criticos?.length || 0;
         const baixos = est.alertas_baixo?.length || 0;
         if (criticos > 0) {
-          items.push({ tipo: 'estoque', msg: `${criticos} item${criticos > 1 ? 'ns' : ''} em estoque CRÍTICO!`, ts: now, prioridade: 4 });
+          items.push({ tipo: 'estoque', msg: `${criticos} item${criticos > 1 ? 'ns' : ''} em estoque CRÍTICO!`, ts: now, prioridade: 4, link: '/estoque' });
         }
         if (baixos > 0) {
-          items.push({ tipo: 'estoque', msg: `${baixos} item${baixos > 1 ? 'ns' : ''} abaixo do estoque mínimo`, ts: now, prioridade: 2 });
+          items.push({ tipo: 'estoque', msg: `${baixos} item${baixos > 1 ? 'ns' : ''} abaixo do estoque mínimo`, ts: now, prioridade: 2, link: '/estoque' });
         }
       }
 
@@ -199,8 +206,9 @@ const Notificacoes = () => {
                   <div key={i} style={{
                     padding: '12px 18px', borderBottom: '1px solid #f9fafb',
                     display: 'flex', alignItems: 'flex-start', gap: '12px',
-                    cursor: 'default', transition: 'background 0.1s',
+                    cursor: n.link ? 'pointer' : 'default', transition: 'background 0.1s',
                   }}
+                    onClick={() => { if (n.link) { navigate(n.link); setOpen(false); } }}
                     onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >

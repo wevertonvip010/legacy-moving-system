@@ -7,6 +7,17 @@ const DIAS_SEMANA_LONGO = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'S�
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' };
 
+const TIPOS_SERVICO = [
+  { key: 'mudanca',    label: 'Mudança',     emoji: '🚚', color: '#c2410c', bg: '#fff7ed', border: '#fed7aa' },
+  { key: 'embalagem',  label: 'Embalagem',   emoji: '📦', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+  { key: 'transporte', label: 'Transporte',  emoji: '🛻', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  { key: 'icamento',   label: 'Içamento',    emoji: '🏗️', color: '#0891b2', bg: '#ecfeff', border: '#a5f3fc' },
+  { key: 'montagem',   label: 'Montagem',    emoji: '🔧', color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+  { key: 'guarda',     label: 'Guarda-Móveis', emoji: '🏠', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+  { key: 'outro',      label: 'Outro',       emoji: '📋', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
+];
+const getTipoConfig = (key) => TIPOS_SERVICO.find(t => t.key === key) || TIPOS_SERVICO[TIPOS_SERVICO.length - 1];
+
 /* ── Helpers de data ─────────────────────────────────────────────────────── */
 function getSemanaISO(date) {
   const d = new Date(date);
@@ -71,9 +82,11 @@ const Programacao = () => {
   // ── Modal de alocação ──────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
   const [editando,  setEditando]  = useState(null);
-  const [form, setForm] = useState({ cliente: '', data: '', equipe: '', veiculo: '', status: 'agendado' });
+  const [form, setForm] = useState({ cliente: '', tipo_servico: 'mudanca', data: '', equipe: '', veiculo: '', status: 'agendado' });
   const [salvando,  setSalvando]  = useState(false);
   const [erroForm,  setErroForm]  = useState('');
+  const [funcionarios, setFuncionarios] = useState([]);
+  const [dragItem, setDragItem] = useState(null);
 
   /* ── Carga de dados ────────────────────────────────────────────────────── */
   const carregar = useCallback(async () => {
@@ -103,6 +116,7 @@ const Programacao = () => {
   }, [semana, ano]);
 
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { api.getFuncionarios().then(setFuncionarios).catch(() => {}); }, []);
 
   /* ── Navegação semanal ─────────────────────────────────────────────────── */
   const semanaAnterior = () => { if (semana === 1) { setSemana(52); setAno(a => a - 1); } else setSemana(s => s - 1); };
@@ -147,8 +161,8 @@ const Programacao = () => {
   const abrir = (p = null, dataStr = '') => {
     setEditando(p);
     setForm(p
-      ? { cliente: p.cliente, data: p.data ? p.data.slice(0, 16) : '', equipe: p.equipe || '', veiculo: p.veiculo || '', status: p.status }
-      : { cliente: '', data: dataStr, equipe: '', veiculo: '', status: 'agendado' });
+      ? { cliente: p.cliente, tipo_servico: p.tipo_servico || 'mudanca', data: p.data ? p.data.slice(0, 16) : '', equipe: p.equipe || '', veiculo: p.veiculo || '', status: p.status }
+      : { cliente: '', tipo_servico: 'mudanca', data: dataStr, equipe: '', veiculo: '', status: 'agendado' });
     setErroForm('');
     setShowModal(true);
   };
@@ -340,17 +354,26 @@ const Programacao = () => {
                       {o.hora_inicio && <p style={{ fontSize: '10px', color: '#9ca3af', margin: '2px 0 0' }}>⏰ {o.hora_inicio}</p>}
                     </div>
                   ))}
-                  {progs.map(p => (
-                    <div key={p.id} style={{ background: '#f0f4ff', borderRadius: '6px', padding: '8px', marginBottom: '6px', border: '1px solid #dbeafe' }}>
-                      <p style={{ fontSize: '12px', fontWeight: '600', color: '#1e40af', margin: '0 0 2px' }}>{p.cliente}</p>
-                      {p.equipe  && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>👥 {p.equipe}</p>}
-                      {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {p.veiculo}</p>}
-                      <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                        <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={11} /></button>
-                        <button onClick={() => deletar(p.id)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={11} /></button>
+                  {progs.map(p => {
+                    const tc = getTipoConfig(p.tipo_servico);
+                    return (
+                      <div key={p.id} draggable
+                        onDragStart={e => { setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }}
+                        style={{ background: tc.bg, borderRadius: '6px', padding: '8px', marginBottom: '6px', border: `1px solid ${tc.border}`, cursor: 'grab' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                          <span style={{ fontSize: '11px' }}>{tc.emoji}</span>
+                          <span style={{ fontSize: '10px', fontWeight: '700', color: tc.color }}>{tc.label}</span>
+                        </div>
+                        <p style={{ fontSize: '12px', fontWeight: '600', color: tc.color, margin: '0 0 2px' }}>{p.cliente}</p>
+                        {p.equipe  && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>👥 {p.equipe}</p>}
+                        {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {p.veiculo}</p>}
+                        <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                          <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={11} /></button>
+                          <button onClick={() => deletar(p.id)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={11} /></button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <button onClick={() => abrir(null, `${isoDate(data)}T08:00`)}
                     style={{ width: '100%', padding: '5px', background: 'none', border: '1px dashed #d1d5db', borderRadius: '6px', fontSize: '11px', color: '#9ca3af', cursor: 'pointer' }}>
                     + Add
@@ -398,6 +421,19 @@ const Programacao = () => {
                   onMouseEnter={e => { if (!isHoje && doMes) e.currentTarget.style.background = '#f9fafb'; }}
                   onMouseLeave={e => { if (!isHoje && doMes) e.currentTarget.style.background = doMes ? 'white' : '#fafafa'; }}
                   onClick={() => abrir(null, `${isoDate(data)}T08:00`)}
+                  onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = '#dbeafe'; }}
+                  onDragLeave={e => { e.currentTarget.style.background = isHoje ? '#eff6ff' : (doMes ? 'white' : '#fafafa'); }}
+                  onDrop={async e => {
+                    e.preventDefault();
+                    e.currentTarget.style.background = isHoje ? '#eff6ff' : (doMes ? 'white' : '#fafafa');
+                    if (dragItem) {
+                      try {
+                        await api.updateProgramacao(dragItem.id, { data: `${isoDate(data)}T${dragItem.data ? dragItem.data.slice(11, 16) : '08:00'}:00` });
+                        setDragItem(null);
+                        carregar();
+                      } catch (err) { alert(err.message); }
+                    }
+                  }}
                 >
                   {/* Número do dia */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
@@ -433,14 +469,21 @@ const Programacao = () => {
                           </span>
                         </div>
                       ))}
-                      {eventos.progs.slice(0, Math.max(0, 3 - eventos.os.length)).map(p => (
-                        <div key={`m-p-${p.id}`} onClick={e => { e.stopPropagation(); abrir(p); }}
-                          style={{ background: '#f0f4ff', borderRadius: '4px', padding: '2px 5px', border: '1px solid #dbeafe', display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden', cursor: 'pointer' }}>
-                          <span style={{ fontSize: '10px', fontWeight: '600', color: '#1e40af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.cliente}
-                          </span>
-                        </div>
-                      ))}
+                      {eventos.progs.slice(0, Math.max(0, 3 - eventos.os.length)).map(p => {
+                        const tc = getTipoConfig(p.tipo_servico);
+                        return (
+                          <div key={`m-p-${p.id}`}
+                            draggable
+                            onDragStart={e => { e.stopPropagation(); setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }}
+                            onClick={e => { e.stopPropagation(); abrir(p); }}
+                            style={{ background: tc.bg, borderRadius: '4px', padding: '2px 5px', border: `1px solid ${tc.border}`, display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden', cursor: 'grab' }}>
+                            <span style={{ fontSize: '9px', flexShrink: 0 }}>{tc.emoji}</span>
+                            <span style={{ fontSize: '10px', fontWeight: '600', color: tc.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {p.cliente}
+                            </span>
+                          </div>
+                        );
+                      })}
                       {totalDia > 3 && (
                         <span style={{ fontSize: '9px', color: '#6b7280', fontWeight: '600', paddingLeft: '2px' }}>
                           +{totalDia - 3} mais
@@ -476,26 +519,115 @@ const Programacao = () => {
       {/* ── Modal alocação ──────────────────────────────────────────────────── */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '440px', maxWidth: '90vw' }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '24px', width: '520px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>{editando ? 'Editar Alocação' : 'Nova Alocação'}</h3>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700' }}>{editando ? 'Editar Alocação' : 'Nova Alocação'}</h3>
               <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={18} /></button>
             </div>
-            {[['Cliente *', 'cliente', 'text', 'Nome do cliente'], ['Equipe', 'equipe', 'text', 'Ex: João, Pedro'], ['Veículo', 'veiculo', 'text', 'Ex: Caminhão']].map(([label, key, type, ph]) => (
-              <div key={key} style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>{label}</label>
-                <input type={type} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} placeholder={ph} style={inputStyle} />
+
+            {/* Cliente */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Cliente *</label>
+              <input value={form.cliente} onChange={e => setForm({ ...form, cliente: e.target.value })} placeholder="Nome do cliente" style={inputStyle} />
+            </div>
+
+            {/* Tipo de serviço */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Tipo de Serviço</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {TIPOS_SERVICO.map(t => (
+                  <button key={t.key} onClick={() => setForm({ ...form, tipo_servico: t.key })}
+                    style={{
+                      padding: '6px 14px', borderRadius: '20px', fontSize: '12px', cursor: 'pointer',
+                      border: `1px solid ${form.tipo_servico === t.key ? t.color : '#e5e7eb'}`,
+                      background: form.tipo_servico === t.key ? t.bg : 'white',
+                      color: form.tipo_servico === t.key ? t.color : '#6b7280',
+                      fontWeight: form.tipo_servico === t.key ? '700' : '400',
+                    }}>
+                    {t.emoji} {t.label}
+                  </button>
+                ))}
               </div>
-            ))}
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data / hora</label>
+            </div>
+
+            {/* Data */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Data / hora</label>
               <input type="datetime-local" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} style={inputStyle} />
             </div>
+
+            {/* Equipe — seleção do banco de funcionários */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '6px' }}>
+                Equipe <span style={{ fontWeight: '400', color: '#9ca3af' }}>— selecione ou digite</span>
+              </label>
+              {funcionarios.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
+                  {funcionarios.map(f => {
+                    const nomes = (form.equipe || '').split(',').map(s => s.trim().toLowerCase());
+                    const selecionado = nomes.includes(f.nome.toLowerCase());
+                    return (
+                      <button key={f.id} onClick={() => {
+                        if (selecionado) {
+                          setForm({ ...form, equipe: nomes.filter(n => n !== f.nome.toLowerCase()).join(', ') });
+                        } else {
+                          setForm({ ...form, equipe: form.equipe ? `${form.equipe}, ${f.nome}` : f.nome });
+                        }
+                      }}
+                        style={{
+                          padding: '4px 10px', borderRadius: '20px', fontSize: '11px', cursor: 'pointer',
+                          border: `1px solid ${selecionado ? '#2563eb' : '#e5e7eb'}`,
+                          background: selecionado ? '#eff6ff' : 'white',
+                          color: selecionado ? '#2563eb' : '#374151',
+                          fontWeight: selecionado ? '700' : '400',
+                        }}>
+                        {f.nome}
+                        {f.funcoes && <span style={{ fontSize: '10px', color: '#9ca3af', marginLeft: '4px' }}>({f.funcoes.split(',')[0]})</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <input value={form.equipe} onChange={e => setForm({ ...form, equipe: e.target.value })}
+                placeholder="Ex: Diego (motorista), Carlinhos (embalador)" style={inputStyle} />
+            </div>
+
+            {/* Veículo */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '4px' }}>Veículo</label>
+              <input value={form.veiculo} onChange={e => setForm({ ...form, veiculo: e.target.value })} placeholder="Ex: Caminhão baú" style={inputStyle} />
+            </div>
+
             {erroForm && <p style={{ color: '#dc2626', fontSize: '13px' }}>{erroForm}</p>}
+
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              {/* Criar sequência — só no novo */}
+              {!editando && form.cliente && form.data && (
+                <button onClick={async () => {
+                  if (!form.cliente.trim()) return;
+                  setSalvando(true);
+                  try {
+                    // Cria a alocação principal
+                    await api.createProgramacao(form);
+                    // Cria automaticamente a mudança no dia seguinte se for embalagem
+                    if (form.tipo_servico === 'embalagem' && form.data) {
+                      const dtBase = new Date(form.data);
+                      dtBase.setDate(dtBase.getDate() + 1);
+                      const nextDate = `${dtBase.getFullYear()}-${String(dtBase.getMonth()+1).padStart(2,'0')}-${String(dtBase.getDate()).padStart(2,'0')}T08:00`;
+                      await api.createProgramacao({ ...form, tipo_servico: 'mudanca', data: nextDate });
+                    }
+                    setShowModal(false);
+                    carregar();
+                  } catch (e) { setErroForm(e.message); }
+                  finally { setSalvando(false); }
+                }} disabled={salvando}
+                  style={{ padding: '9px 16px', background: '#7c3aed', color: 'white', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
+                  + Criar com sequência
+                </button>
+              )}
               <button onClick={() => setShowModal(false)} style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', background: 'white' }}>Cancelar</button>
               <button onClick={salvar} disabled={salvando}
-                style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '500', opacity: salvando ? 0.7 : 1 }}>
+                style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '600', opacity: salvando ? 0.7 : 1 }}>
                 {salvando ? 'Salvando...' : 'Salvar'}
               </button>
             </div>

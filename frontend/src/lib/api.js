@@ -270,6 +270,15 @@ export const api = {
   registrarAtividade: (data) => req('POST', '/api/admin/atividade', data),
   getAtividadeAdmin: () => req('GET', '/api/admin/atividade'),
 
+  // Funcionários (banco de ajudantes)
+  getFuncionarios: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/api/funcionarios${qs ? '?' + qs : ''}`);
+  },
+  createFuncionario: (data) => req('POST', '/api/funcionarios', data),
+  updateFuncionario: (id, data) => req('PUT', `/api/funcionarios/${id}`, data),
+  deleteFuncionario: (id) => req('DELETE', `/api/funcionarios/${id}`),
+
   // Configurações do Sistema
   getConfig: () => req('GET', '/api/config'),
   setConfig: (data) => req('PUT', '/api/config', data),
