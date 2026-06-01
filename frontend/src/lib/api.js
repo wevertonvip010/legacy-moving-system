@@ -278,6 +278,11 @@ export const api = {
   createFuncionario: (data) => req('POST', '/api/funcionarios', data),
   updateFuncionario: (id, data) => req('PUT', `/api/funcionarios/${id}`, data),
   deleteFuncionario: (id) => req('DELETE', `/api/funcionarios/${id}`),
+  getRankingFuncionarios: () => req('GET', '/api/funcionarios/ranking'),
+  // Equipe da OS
+  getEquipeOS: (osId) => req('GET', `/api/os/${osId}/equipe`),
+  vincularEquipeOS: (osId, data) => req('POST', `/api/os/${osId}/equipe`, data),
+  desvincularEquipeOS: (osId, vinculoId) => req('DELETE', `/api/os/${osId}/equipe/${vinculoId}`),
 
   // Configurações do Sistema
   getConfig: () => req('GET', '/api/config'),

@@ -30,7 +30,7 @@ from database_real import (
     EtapaOperacional, FechamentoOperacional, Comissao,
     Avaria, UserActivityLog,
     Material, BoxEvento, AuditLog, Jornada, Turno,
-    RecorrenteFinanceiro, ConfigSistema, Funcionario,
+    RecorrenteFinanceiro, ConfigSistema, Funcionario, FuncionarioOS,
     init_db
 )
 
@@ -3270,6 +3270,7 @@ def _func_dict(f):
         "valor_diaria": f.valor_diaria, "salario": f.salario,
         "disponibilidade": f.disponibilidade,
         "avaliacao": f.avaliacao, "total_servicos": f.total_servicos,
+        "pontos": f.pontos or 0,
         "ativo": f.ativo, "observacoes": f.observacoes,
         "created_at": f.created_at.isoformat() if f.created_at else None,
     }
@@ -3338,6 +3339,114 @@ def deletar_funcionario(id):
     db.session.delete(f)
     db.session.commit()
     return jsonify({"ok": True})
+
+
+# ── VÍNCULO FUNCIONÁRIO ↔ OS ──────────────────────────────────────────────────
+@app.route('/api/os/<int:os_id>/equipe', methods=['GET'])
+@jwt_required()
+def listar_equipe_os(os_id):
+    OrdemServico.query.get_or_404(os_id)
+    vinculos = FuncionarioOS.query.filter_by(os_id=os_id).all()
+    result = []
+    for v in vinculos:
+        f = Funcionario.query.get(v.funcionario_id)
+        result.append({
+            "id": v.id, "funcionario_id": v.funcionario_id,
+            "nome": f.nome if f else '?', "tipo": f.tipo if f else '',
+            "funcao_no_servico": v.funcao_no_servico,
+            "funcoes": f.funcoes if f else '',
+            "pontos_ganhos": v.pontos_ganhos,
+            "etapa_id": v.etapa_id,
+            "data": v.data.isoformat() if v.data else None,
+        })
+    return jsonify(result)
+
+
+@app.route('/api/os/<int:os_id>/equipe', methods=['POST'])
+@require_role('admin', 'operacional')
+def vincular_funcionario_os(os_id):
+    """Vincula um ou mais funcionários a uma OS."""
+    OrdemServico.query.get_or_404(os_id)
+    data = request.json or {}
+    funcionario_ids = data.get('funcionario_ids', [])
+    etapa_id = data.get('etapa_id')
+
+    # Pontos por tipo de serviço
+    PONTOS = {'mudanca': 15, 'embalagem': 10, 'transporte': 12, 'icamento': 20, 'montagem': 8}
+    pontos_base = PONTOS.get(data.get('tipo_servico', ''), 10)
+
+    vinculados = []
+    for fid in funcionario_ids:
+        f = Funcionario.query.get(fid)
+        if not f:
+            continue
+        # Evita duplicata
+        existente = FuncionarioOS.query.filter_by(
+            funcionario_id=fid, os_id=os_id, etapa_id=etapa_id
+        ).first()
+        if existente:
+            continue
+        v = FuncionarioOS(
+            funcionario_id=fid, os_id=os_id, etapa_id=etapa_id,
+            funcao_no_servico=f.funcoes.split(',')[0].strip() if f.funcoes else '',
+            pontos_ganhos=pontos_base,
+        )
+        db.session.add(v)
+        # Atualiza contadores do funcionário
+        f.total_servicos = (f.total_servicos or 0) + 1
+        f.pontos = (f.pontos or 0) + pontos_base
+        vinculados.append(f.nome)
+
+    db.session.commit()
+    return jsonify({"vinculados": vinculados, "pontos": pontos_base})
+
+
+@app.route('/api/os/<int:os_id>/equipe/<int:vinculo_id>', methods=['DELETE'])
+@require_role('admin', 'operacional')
+def desvincular_funcionario_os(os_id, vinculo_id):
+    v = FuncionarioOS.query.get_or_404(vinculo_id)
+    # Remove pontos
+    f = Funcionario.query.get(v.funcionario_id)
+    if f:
+        f.total_servicos = max(0, (f.total_servicos or 0) - 1)
+        f.pontos = max(0, (f.pontos or 0) - (v.pontos_ganhos or 0))
+    db.session.delete(v)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/funcionarios/ranking', methods=['GET'])
+@jwt_required()
+def ranking_funcionarios():
+    """Ranking gamificado de funcionários por pontos."""
+    funcs = Funcionario.query.filter_by(ativo=True).order_by(Funcionario.pontos.desc()).all()
+    NIVEIS = [
+        (500, 'Lenda', '🏆'), (300, 'Expert', '💎'), (150, 'Veterano', '⭐'),
+        (80, 'Profissional', '🔥'), (30, 'Iniciante', '🌱'), (0, 'Novato', '🆕'),
+    ]
+    result = []
+    for i, f in enumerate(funcs):
+        pts = f.pontos or 0
+        nivel = next((n for n in NIVEIS if pts >= n[0]), NIVEIS[-1])
+        prox = next((n for n in reversed(NIVEIS) if n[0] > pts), None)
+        result.append({
+            **_func_dict(f),
+            "posicao": i + 1,
+            "pontos": pts,
+            "nivel": nivel[1],
+            "nivel_emoji": nivel[2],
+            "proximo_nivel": prox[1] if prox else None,
+            "pontos_proximo": prox[0] - pts if prox else 0,
+            # Histórico de OS
+            "os_recentes": [{
+                "os_id": v.os_id,
+                "funcao": v.funcao_no_servico,
+                "pontos": v.pontos_ganhos,
+                "data": v.data.isoformat() if v.data else None,
+            } for v in FuncionarioOS.query.filter_by(funcionario_id=f.id)
+                .order_by(FuncionarioOS.created_at.desc()).limit(5).all()],
+        })
+    return jsonify(result)
 
 
 # ── PORTAL DO CLIENTE (público, sem autenticação) ────────────────────────────

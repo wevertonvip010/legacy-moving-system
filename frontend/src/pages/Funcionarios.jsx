@@ -1,6 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Plus, Search, Edit, Trash2, X, Star, Phone, AlertCircle, UserCheck, Clock } from 'lucide-react';
+import { Users, Plus, Search, Edit, Trash2, X, Star, Phone, AlertCircle, UserCheck, Clock, Award, TrendingUp } from 'lucide-react';
 import { api } from '../lib/api';
+
+const NIVEIS = [
+  { min: 500, label: 'Lenda',        emoji: '🏆', color: '#d97706', bg: '#fffbeb' },
+  { min: 300, label: 'Expert',       emoji: '💎', color: '#7c3aed', bg: '#f5f3ff' },
+  { min: 150, label: 'Veterano',     emoji: '⭐', color: '#2563eb', bg: '#eff6ff' },
+  { min: 80,  label: 'Profissional', emoji: '🔥', color: '#ea580c', bg: '#fff7ed' },
+  { min: 30,  label: 'Iniciante',    emoji: '🌱', color: '#16a34a', bg: '#f0fdf4' },
+  { min: 0,   label: 'Novato',       emoji: '🆕', color: '#6b7280', bg: '#f9fafb' },
+];
+const getNivel = (pts) => NIVEIS.find(n => (pts || 0) >= n.min) || NIVEIS[NIVEIS.length - 1];
+const getProximo = (pts) => {
+  const idx = NIVEIS.findIndex(n => (pts || 0) >= n.min);
+  return idx > 0 ? NIVEIS[idx - 1] : null;
+};
 
 const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' };
@@ -44,6 +58,8 @@ const Funcionarios = () => {
   const [form, setForm] = useState(EMPTY);
   const [salvando, setSalvando] = useState(false);
   const [erroForm, setErroForm] = useState('');
+  const [aba, setAba] = useState('equipe'); // 'equipe' | 'ranking'
+  const [ranking, setRanking] = useState([]);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -55,6 +71,9 @@ const Funcionarios = () => {
   }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => {
+    if (aba === 'ranking') api.getRankingFuncionarios().then(setRanking).catch(() => {});
+  }, [aba]);
 
   const abrir = (f = null) => {
     setEditando(f);
@@ -153,6 +172,143 @@ const Funcionarios = () => {
           <Plus size={14} /> Novo Funcionário
         </button>
       </div>
+
+      {/* Abas */}
+      <div style={{ display: 'flex', gap: '0', marginBottom: '20px', borderBottom: '2px solid #e5e7eb' }}>
+        {[
+          { key: 'equipe', label: '👥 Equipe', icon: Users },
+          { key: 'ranking', label: '🏆 Ranking & Pontos', icon: Award },
+        ].map(t => (
+          <button key={t.key} onClick={() => setAba(t.key)}
+            style={{
+              padding: '10px 20px', border: 'none', cursor: 'pointer',
+              fontSize: '13px', fontWeight: '600',
+              background: 'transparent',
+              color: aba === t.key ? '#0f1f3d' : '#6b7280',
+              borderBottom: aba === t.key ? '2px solid #0f1f3d' : '2px solid transparent',
+              marginBottom: '-2px',
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════ ABA RANKING ══════ */}
+      {aba === 'ranking' && (
+        <div>
+          {ranking.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>
+              <Award size={40} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.3 }} />
+              <p style={{ fontSize: '14px', margin: '0 0 4px' }}>Nenhum funcionário com pontos</p>
+              <p style={{ fontSize: '12px', margin: 0 }}>Vincule funcionários às OS para gerar pontos automaticamente</p>
+            </div>
+          ) : (
+            <>
+              {/* Top 3 destaque */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                {ranking.slice(0, 3).map((f, i) => {
+                  const nv = getNivel(f.pontos);
+                  const medalhas = ['🥇', '🥈', '🥉'];
+                  return (
+                    <div key={f.id} style={{
+                      background: i === 0 ? 'linear-gradient(135deg, #fffbeb, #fef3c7)' : 'white',
+                      borderRadius: '14px', padding: '20px', textAlign: 'center',
+                      border: `2px solid ${i === 0 ? '#fde68a' : '#e5e7eb'}`,
+                      boxShadow: i === 0 ? '0 4px 20px rgba(217,119,6,0.15)' : 'none',
+                    }}>
+                      <div style={{ fontSize: '36px', marginBottom: '4px' }}>{medalhas[i]}</div>
+                      <p style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: '800', color: '#1a1a1a' }}>{f.nome}</p>
+                      <p style={{ margin: '0 0 8px', fontSize: '11px', color: '#6b7280' }}>{f.funcoes || '—'}</p>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 12px', borderRadius: '20px', background: nv.bg, border: `1px solid ${nv.color}30` }}>
+                        <span style={{ fontSize: '14px' }}>{nv.emoji}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: nv.color }}>{nv.label}</span>
+                      </div>
+                      <p style={{ margin: '8px 0 0', fontSize: '24px', fontWeight: '800', color: '#d97706' }}>{f.pontos} pts</p>
+                      <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#9ca3af' }}>{f.total_servicos} serviços</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Tabela completa */}
+              <div style={{ background: 'white', borderRadius: '12px', border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f9fafb' }}>
+                      {['#', 'Funcionário', 'Tipo', 'Nível', 'Pontos', 'Serviços', 'Próximo Nível', 'Últimas OS'].map(h => (
+                        <th key={h} style={{ padding: '10px 14px', textAlign: h === '#' || h === 'Funcionário' ? 'left' : 'center', fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ranking.map((f, i) => {
+                      const nv = getNivel(f.pontos);
+                      const prox = getProximo(f.pontos);
+                      const progresso = prox ? Math.min(100, ((f.pontos - (NIVEIS.find(n => n.label === nv.label)?.min || 0)) / (prox.min - (NIVEIS.find(n => n.label === nv.label)?.min || 0))) * 100) : 100;
+                      return (
+                        <tr key={f.id} style={{ borderTop: '0.5px solid #f3f4f6' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <td style={{ padding: '12px 14px', fontSize: '16px', fontWeight: '700' }}>
+                            {['🥇','🥈','🥉'][i] || `#${i+1}`}
+                          </td>
+                          <td style={{ padding: '12px 14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: nv.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', border: `2px solid ${nv.color}30` }}>
+                                {nv.emoji}
+                              </div>
+                              <div>
+                                <p style={{ margin: 0, fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{f.nome}</p>
+                                <p style={{ margin: 0, fontSize: '11px', color: '#9ca3af' }}>{f.funcoes || '—'}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', fontWeight: '700', background: f.tipo === 'fixo' ? '#eff6ff' : '#fffbeb', color: f.tipo === 'fixo' ? '#2563eb' : '#d97706' }}>
+                              {f.tipo === 'fixo' ? '👷 Fixo' : '🔧 Diarista'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                            <span style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '20px', fontWeight: '700', background: nv.bg, color: nv.color, border: `1px solid ${nv.color}30` }}>
+                              {nv.emoji} {nv.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: '16px', fontWeight: '800', color: '#d97706' }}>{f.pontos}</td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: '14px', fontWeight: '600' }}>{f.total_servicos}</td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                            {prox ? (
+                              <div>
+                                <div style={{ height: '6px', background: '#f3f4f6', borderRadius: '3px', marginBottom: '4px' }}>
+                                  <div style={{ height: '100%', width: `${progresso}%`, background: prox.color, borderRadius: '3px' }} />
+                                </div>
+                                <span style={{ fontSize: '10px', color: '#6b7280' }}>Faltam {prox.min - f.pontos} pts → {prox.emoji} {prox.label}</span>
+                              </div>
+                            ) : <span style={{ fontSize: '11px', color: '#d97706' }}>🏆 Nível máximo!</span>}
+                          </td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                            {(f.os_recentes || []).length > 0 ? (
+                              <div style={{ display: 'flex', gap: '3px', justifyContent: 'center' }}>
+                                {f.os_recentes.slice(0, 3).map((os, j) => (
+                                  <span key={j} style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', background: '#f3f4f6', color: '#374151' }}>
+                                    +{os.pontos}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : <span style={{ fontSize: '11px', color: '#d1d5db' }}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══════ ABA EQUIPE ══════ */}
+      {aba === 'equipe' && <>
 
       {/* KPI Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '24px' }}>
@@ -276,6 +432,19 @@ const Funcionarios = () => {
                 )}
               </div>
 
+              {/* Pontos + Nível */}
+              {(() => {
+                const nv = getNivel(f.pontos);
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '6px 8px', background: nv.bg, borderRadius: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: nv.color, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {nv.emoji} {nv.label}
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#d97706' }}>{f.pontos || 0} pts</span>
+                  </div>
+                );
+              })()}
+
               {/* Footer: avaliação + status */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f3f4f6', paddingTop: '10px' }}>
                 <StarRating value={f.avaliacao || 5} readonly />
@@ -304,6 +473,8 @@ const Funcionarios = () => {
           <p style={{ fontSize: '12px', margin: 0 }}>Cadastre sua equipe para facilitar a alocação na programação</p>
         </div>
       )}
+
+      </>}
 
       {/* Modal Novo / Editar */}
       {showModal && (

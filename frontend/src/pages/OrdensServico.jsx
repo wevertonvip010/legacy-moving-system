@@ -73,6 +73,9 @@ const OrdensServico = () => {
   const [etapas, setEtapas] = useState([]);
   const [loadingEtapas, setLoadingEtapas] = useState(false);
   const [formEtapa, setFormEtapa] = useState(EMPTY_ETAPA);
+  // Funcionários
+  const [funcionarios, setFuncionarios] = useState([]);
+  const [equipeOS, setEquipeOS] = useState([]);
   const [editandoEtapa, setEditandoEtapa] = useState(null);
   const [salvandoEtapa, setSalvandoEtapa] = useState(false);
   // Avaria prompt pós-conclusão
@@ -88,6 +91,7 @@ const OrdensServico = () => {
   }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { api.getFuncionarios().then(setFuncionarios).catch(() => {}); }, []);
 
   const abrir = (o = null) => {
     setEditando(o);
@@ -175,9 +179,32 @@ const OrdensServico = () => {
     setEditandoEtapa(null);
     setLoadingEtapas(true);
     try {
-      setEtapas(await api.getEtapas(os.id));
+      const [et, eq] = await Promise.allSettled([
+        api.getEtapas(os.id),
+        api.getEquipeOS(os.id),
+      ]);
+      if (et.status === 'fulfilled') setEtapas(et.value);
+      if (eq.status === 'fulfilled') setEquipeOS(eq.value);
     } catch (e) { alert(e.message); }
     finally { setLoadingEtapas(false); }
+  };
+
+  const vincularFuncionario = async (funcId) => {
+    if (!osEtapas) return;
+    try {
+      await api.vincularEquipeOS(osEtapas.id, { funcionario_ids: [funcId] });
+      const eq = await api.getEquipeOS(osEtapas.id);
+      setEquipeOS(eq);
+    } catch (e) { alert(e.message); }
+  };
+
+  const desvincularFuncionario = async (vinculoId) => {
+    if (!osEtapas) return;
+    try {
+      await api.desvincularEquipeOS(osEtapas.id, vinculoId);
+      const eq = await api.getEquipeOS(osEtapas.id);
+      setEquipeOS(eq);
+    } catch (e) { alert(e.message); }
   };
 
   const salvarEtapa = async () => {
@@ -476,6 +503,44 @@ const OrdensServico = () => {
             </div>
 
             <div style={{ padding: '20px 24px' }}>
+              {/* ── Equipe da OS ── */}
+              <div style={{ marginBottom: '20px', background: '#f0f4ff', borderRadius: '10px', padding: '14px 16px', border: '1px solid #bfdbfe' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: '#1d4ed8' }}>👥 Equipe Alocada</span>
+                  <span style={{ fontSize: '11px', color: '#6b7280' }}>{equipeOS.length} funcionário{equipeOS.length !== 1 ? 's' : ''}</span>
+                </div>
+                {/* Funcionários vinculados */}
+                {equipeOS.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                    {equipeOS.map(v => (
+                      <span key={v.id} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        padding: '4px 10px', borderRadius: '20px', fontSize: '12px',
+                        background: 'white', border: '1px solid #bfdbfe', color: '#1d4ed8', fontWeight: '600',
+                      }}>
+                        {v.nome}
+                        {v.funcao_no_servico && <span style={{ fontSize: '10px', color: '#6b7280' }}>({v.funcao_no_servico})</span>}
+                        <span style={{ fontSize: '10px', color: '#d97706', fontWeight: '700' }}>+{v.pontos_ganhos}pts</span>
+                        <button onClick={() => desvincularFuncionario(v.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '0 2px', fontSize: '12px', fontWeight: '700' }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Adicionar funcionário */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                  {funcionarios.filter(f => !equipeOS.some(e => e.funcionario_id === f.id)).map(f => (
+                    <button key={f.id} onClick={() => vincularFuncionario(f.id)}
+                      style={{
+                        padding: '4px 10px', borderRadius: '20px', fontSize: '11px', cursor: 'pointer',
+                        border: '1px dashed #93c5fd', background: 'white', color: '#6b7280',
+                      }}>
+                      + {f.nome} <span style={{ fontSize: '9px' }}>({(f.funcoes || '').split(',')[0]})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Lista de etapas */}
               {loadingEtapas ? (
                 <p style={{ color: '#9ca3af', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>Carregando...</p>

@@ -334,8 +334,23 @@ class Funcionario(db.Model):
     disponibilidade = db.Column(db.String(100))            # Ex: "seg-sex" ou "sob demanda"
     avaliacao = db.Column(db.Float, default=5.0)           # 1-5 estrelas
     total_servicos = db.Column(db.Integer, default=0)
+    pontos = db.Column(db.Integer, default=0)             # Gamificação
     ativo = db.Column(db.Boolean, default=True)
     observacoes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ── VÍNCULO FUNCIONÁRIO ↔ OS ─────────────────────────────────────────────
+class FuncionarioOS(db.Model):
+    """Registra qual funcionário participou de qual OS/etapa."""
+    __tablename__ = 'funcionario_os'
+    id = db.Column(db.Integer, primary_key=True)
+    funcionario_id = db.Column(db.Integer, db.ForeignKey('funcionarios.id'), nullable=False)
+    os_id = db.Column(db.Integer, db.ForeignKey('ordens_servico.id'), nullable=False)
+    etapa_id = db.Column(db.Integer, db.ForeignKey('etapas_operacionais.id'), nullable=True)
+    funcao_no_servico = db.Column(db.String(100))   # Ex: "motorista", "embalador"
+    pontos_ganhos = db.Column(db.Integer, default=10)
+    data = db.Column(db.DateTime, default=datetime.utcnow)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
