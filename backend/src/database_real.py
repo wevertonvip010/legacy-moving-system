@@ -324,8 +324,16 @@ class Funcionario(db.Model):
     __tablename__ = 'funcionarios'
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(255), nullable=False)
-    funcoes = db.Column(db.String(500))       # Ex: "embalador,motorista,ajudante"
+    tipo = db.Column(db.String(30), default='fixo')       # fixo | diarista
+    funcoes = db.Column(db.String(500))                    # Ex: "embalador,motorista"
     telefone = db.Column(db.String(30))
+    cpf = db.Column(db.String(20))
+    pix = db.Column(db.String(255))
+    valor_diaria = db.Column(db.Float, default=0)          # Valor da diária (diaristas)
+    salario = db.Column(db.Float, default=0)               # Salário mensal (fixos)
+    disponibilidade = db.Column(db.String(100))            # Ex: "seg-sex" ou "sob demanda"
+    avaliacao = db.Column(db.Float, default=5.0)           # 1-5 estrelas
+    total_servicos = db.Column(db.Integer, default=0)
     ativo = db.Column(db.Boolean, default=True)
     observacoes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

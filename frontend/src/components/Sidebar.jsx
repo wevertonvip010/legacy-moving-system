@@ -34,6 +34,7 @@ const menuGroups = [
       { id: 'contratos',              label: 'Contratos',            icon: FileCheck,       path: '/contratos',         modulo: 'contratos' },
       { id: 'ordens-servico',         label: 'Ordens de Serviço',    icon: Truck,           path: '/ordens-servico',    modulo: 'os' },
       { id: 'programacao',            label: 'Programação',          icon: Zap,             path: '/programacao',       modulo: 'programacao' },
+      { id: 'funcionarios',           label: 'Equipe',               icon: UserCheck,       path: '/funcionarios',      modulo: 'programacao' },
     ]
   },
   {

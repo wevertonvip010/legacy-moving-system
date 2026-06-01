@@ -25,6 +25,7 @@ import Configuracoes from './pages/Configuracoes';
 import Avarias from './pages/Avarias';
 import PainelExecutivo from './pages/PainelExecutivo';
 import Controladoria from './pages/Controladoria';
+import Funcionarios from './pages/Funcionarios';
 import PortalCliente from './pages/PortalCliente';
 import './App.css';
 
@@ -59,6 +60,7 @@ function App() {
           <Route path="/configuracoes"          element={<PR><Configuracoes /></PR>} />
           <Route path="/avarias"               element={<PR><Avarias /></PR>} />
           <Route path="/painel-executivo"      element={<PR><PainelExecutivo /></PR>} />
+          <Route path="/funcionarios"           element={<PR><Funcionarios /></PR>} />
           <Route path="/controladoria"         element={<PR><Controladoria /></PR>} />
           <Route path="/"                       element={<Navigate to="/dashboard" replace />} />
           <Route path="*"                       element={<Navigate to="/dashboard" replace />} />

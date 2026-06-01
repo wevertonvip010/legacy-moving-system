@@ -3262,19 +3262,31 @@ def listar_turnos():
 
 
 # ── FUNCIONÁRIOS ──────────────────────────────────────────────────────────────
+def _func_dict(f):
+    return {
+        "id": f.id, "nome": f.nome, "tipo": f.tipo,
+        "funcoes": f.funcoes, "telefone": f.telefone,
+        "cpf": f.cpf, "pix": f.pix,
+        "valor_diaria": f.valor_diaria, "salario": f.salario,
+        "disponibilidade": f.disponibilidade,
+        "avaliacao": f.avaliacao, "total_servicos": f.total_servicos,
+        "ativo": f.ativo, "observacoes": f.observacoes,
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
 @app.route('/api/funcionarios', methods=['GET'])
 @jwt_required()
 def listar_funcionarios():
     ativo = request.args.get('ativo', '1')
+    tipo = request.args.get('tipo', '')
     q = Funcionario.query
     if ativo == '1':
         q = q.filter_by(ativo=True)
+    if tipo:
+        q = q.filter_by(tipo=tipo)
     funcs = q.order_by(Funcionario.nome).all()
-    return jsonify([{
-        "id": f.id, "nome": f.nome, "funcoes": f.funcoes,
-        "telefone": f.telefone, "ativo": f.ativo,
-        "observacoes": f.observacoes,
-    } for f in funcs])
+    return jsonify([_func_dict(f) for f in funcs])
 
 
 @app.route('/api/funcionarios', methods=['POST'])
@@ -3284,15 +3296,18 @@ def criar_funcionario():
     if not data.get('nome'):
         return err("Nome é obrigatório")
     f = Funcionario(
-        nome=data['nome'],
-        funcoes=data.get('funcoes', ''),
-        telefone=data.get('telefone', ''),
+        nome=data['nome'], tipo=data.get('tipo', 'fixo'),
+        funcoes=data.get('funcoes', ''), telefone=data.get('telefone', ''),
+        cpf=data.get('cpf', ''), pix=data.get('pix', ''),
+        valor_diaria=float(data.get('valor_diaria', 0)),
+        salario=float(data.get('salario', 0)),
+        disponibilidade=data.get('disponibilidade', ''),
         observacoes=data.get('observacoes', ''),
         ativo=data.get('ativo', True),
     )
     db.session.add(f)
     db.session.commit()
-    return jsonify({"id": f.id, "nome": f.nome}), 201
+    return jsonify(_func_dict(f)), 201
 
 
 @app.route('/api/funcionarios/<int:id>', methods=['PUT'])
@@ -3300,11 +3315,20 @@ def criar_funcionario():
 def atualizar_funcionario(id):
     f = Funcionario.query.get_or_404(id)
     data = request.json or {}
-    for campo in ['nome', 'funcoes', 'telefone', 'observacoes', 'ativo']:
+    for campo in ['nome', 'tipo', 'funcoes', 'telefone', 'cpf', 'pix',
+                   'disponibilidade', 'observacoes', 'ativo']:
         if campo in data:
             setattr(f, campo, data[campo])
+    if 'valor_diaria' in data:
+        f.valor_diaria = float(data['valor_diaria'])
+    if 'salario' in data:
+        f.salario = float(data['salario'])
+    if 'avaliacao' in data:
+        f.avaliacao = float(data['avaliacao'])
+    if 'total_servicos' in data:
+        f.total_servicos = int(data['total_servicos'])
     db.session.commit()
-    return jsonify({"id": f.id, "nome": f.nome, "funcoes": f.funcoes})
+    return jsonify(_func_dict(f))
 
 
 @app.route('/api/funcionarios/<int:id>', methods=['DELETE'])
