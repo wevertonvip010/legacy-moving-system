@@ -65,12 +65,18 @@ def current_user():
 
 
 def require_role(*roles):
+    # 'comercial' e 'vendedor' são equivalentes (alias histórico)
+    _roles = set(roles)
+    if 'vendedor' in _roles:
+        _roles.add('comercial')
+    if 'comercial' in _roles:
+        _roles.add('vendedor')
     def decorator(fn):
         @wraps(fn)
         @jwt_required()
         def wrapper(*args, **kwargs):
             u = current_user()
-            if not u or (u.role not in roles and u.role != 'admin'):
+            if not u or (u.role not in _roles and u.role != 'admin'):
                 return err("Acesso negado", 403)
             return fn(*args, **kwargs)
         return wrapper
@@ -2036,7 +2042,7 @@ def movimentacoes_estoque(id):
         user_nome = None
         if m.user_id:
             u = User.query.get(m.user_id)
-            if u: user_nome = u.nome
+            if u: user_nome = u.name
         os_numero = None
         if m.os_id:
             o = OrdemServico.query.get(m.os_id)
@@ -2065,14 +2071,14 @@ def movimentacoes_recentes():
         user_nome = None
         if m.user_id:
             u = User.query.get(m.user_id)
-            if u: user_nome = u.nome
+            if u: user_nome = u.name
         os_numero = None
         if m.os_id:
             o = OrdemServico.query.get(m.os_id)
             if o: os_numero = o.numero
         result.append({
             "id": m.id,
-            "material_nome": e.material_nome if e else '—',
+            "material_nome": e.nome_material if e else '—',
             "tipo": m.tipo, "quantidade": m.quantidade,
             "quantidade_anterior": m.quantidade_anterior,
             "quantidade_posterior": m.quantidade_posterior,
