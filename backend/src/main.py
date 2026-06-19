@@ -37,7 +37,9 @@ from database_real import (
 app = Flask(__name__)
 
 _db_file = os.path.join(current_dir, "legacy_moving.db").replace("\\", "/")
-DB_PATH = os.environ.get('DATABASE_URL') or f'sqlite:///{_db_file}'
+_raw_db = os.environ.get('DATABASE_URL') or f'sqlite:///{_db_file}'
+# Railway fornece postgres:// mas SQLAlchemy exige postgresql://
+DB_PATH = _raw_db.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = DB_PATH
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 _jwt_secret = os.environ.get('JWT_SECRET_KEY')
