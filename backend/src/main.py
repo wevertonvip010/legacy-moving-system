@@ -34,6 +34,7 @@ from database_real import (
     Avaria, UserActivityLog,
     Material, BoxEvento, AuditLog, Jornada, Turno,
     RecorrenteFinanceiro, ConfigSistema, Funcionario, FuncionarioOS,
+    AIUsageLog,
     init_db
 )
 
@@ -68,6 +69,14 @@ CORS(app, origins="*", allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 init_db(app)
 init_drive_routes(app)   # registra /api/drive/* blueprint
+
+# ── IA Mirante — integração Anthropic (graceful) ─────────────────────────────
+try:
+    from routes.ai_config import ai_config_bp
+    app.register_blueprint(ai_config_bp, url_prefix='/api/ai')
+    logger.info("IA Mirante: blueprint /api/ai/* registrado.")
+except Exception as _ai_err:
+    logger.warning(f"IA Mirante não disponível: {_ai_err}")
 
 
 # ── HELPERS ─────────────────────────────────────────────────────────────────
