@@ -37,6 +37,16 @@ from database_real import (
     init_db
 )
 
+# ── Drive backup (graceful: não quebra se offline) ──────────────────────────
+try:
+    from drive_hooks import enqueue_backup, init_drive_routes
+    _DRIVE_HOOKS_OK = True
+except Exception as _dh_err:
+    logger.warning(f"drive_hooks não disponível — Drive offline: {_dh_err}")
+    def enqueue_backup(*a, **kw): pass
+    def init_drive_routes(a): pass
+    _DRIVE_HOOKS_OK = False
+
 app = Flask(__name__)
 
 _db_file = os.path.join(current_dir, "legacy_moving.db").replace("\\", "/")
@@ -57,6 +67,7 @@ jwt = JWTManager(app)
 CORS(app, origins="*", allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 init_db(app)
+init_drive_routes(app)   # registra /api/drive/* blueprint
 
 
 # ── HELPERS ─────────────────────────────────────────────────────────────────
@@ -720,14 +731,15 @@ def deletar_lead(id):
     return jsonify({"status": "perdido"})
 
 
+# ── ENDPOINT PÚBLICO — RECEBE LEADS DO SITE ──────────────────────────────────
 # ── EMAIL UTILITÁRIO ─────────────────────────────────────────────────────────
-LEGACY_EMAIL    = 'legacymovingbr@gmail.com'
-EMAIL_SENHA_APP = os.environ.get('EMAIL_SENHA_APP', '')
+LEGACY_EMAIL      = 'legacymovingbr@gmail.com'
+EMAIL_SENHA_APP   = os.environ.get('EMAIL_SENHA_APP', '')   # Gmail App Password no Render
 
-def _enviar_email(destinatario, assunto, corpo_html, corpo_texto=''):
-    """Envia email via Gmail SMTP. Falha silenciosa se credenciais nao configuradas."""
+def _enviar_email(destinatario: str, assunto: str, corpo_html: str, corpo_texto: str = ''):
+    """Envia email via Gmail SMTP. Falha silenciosa se credenciais não configuradas."""
     if not EMAIL_SENHA_APP:
-        logger.warning("EMAIL_SENHA_APP nao configurada — email nao enviado.")
+        logger.warning("EMAIL_SENHA_APP não configurada — email não enviado.")
         return False
     try:
         msg = MIMEMultipart('alternative')
@@ -746,44 +758,54 @@ def _enviar_email(destinatario, assunto, corpo_html, corpo_texto=''):
         logger.error(f"Falha ao enviar email: {e}")
         return False
 
-
-# ── ENDPOINT PUBLICO — RECEBE LEADS DO SITE ──────────────────────────────────
-LEAD_SITE_AUTH = os.environ.get('SITE_TOKEN', 'legacy-site-2026-token')
+# ── ENDPOINT PÚBLICO — RECEBE LEADS DO SITE ──────────────────────────────────
+SITE_TOKEN = os.environ.get('SITE_TOKEN', 'legacy-site-2026-token')
 
 @app.route('/api/leads/site', methods=['POST'])
 def receber_lead_site():
-    """Endpoint publico — recebe leads do site institucional sem JWT."""
-    token = request.headers.get('X-Site-Token') or (request.json or {}).get('_token', '')
-    if token != LEAD_SITE_AUTH:
-        return err("Token invalido", 403)
+    """Endpoint público — recebe leads do site institucional sem JWT."""
+    # Verificação básica de token
+    token = request.headers.get('X-Site-Token') or request.json.get('_token', '')
+    if token != SITE_TOKEN:
+        return err("Token inválido", 403)
 
     data = request.json or {}
     source = data.get('source', 'site')
+
+    # Montar nome/telefone dependendo do tipo de formulário
     nome = data.get('nome') or data.get('contact', '')
     telefone = data.get('telefone', '')
-    email_lead = data.get('email', '')
+    email = data.get('email', '')
 
+    # Formulário do Guia (captura simples)
     if source == 'guia-legacy':
         channel = data.get('channel', 'email')
         contact = data.get('contact', '')
         if channel == 'email':
-            email_lead = contact
+            email = contact
         else:
             telefone = contact
         nome = contact or 'Lead Guia Legacy'
 
     if not nome:
-        return err("Nome ou contato e obrigatorio")
+        return err("Nome ou contato é obrigatório")
 
+    # Mapear tipo de serviço
     servico_map = {
-        'residencial': 'residencial', 'corporativo': 'corporativo',
-        'storage': 'guarda_moveis', 'especiais': 'icamento', 'naosei': 'residencial',
+        'residencial': 'residencial',
+        'corporativo': 'corporativo',
+        'storage': 'guarda_moveis',
+        'especiais': 'içamento',
+        'naosei': 'residencial',
     }
     tipo = servico_map.get(data.get('servico', ''), 'residencial')
 
     lead = Lead(
-        nome=nome, telefone=telefone or 'nao informado', email=email_lead,
-        origem='site', tipo_servico=tipo,
+        nome=nome,
+        telefone=telefone or 'não informado',
+        email=email,
+        origem='site',
+        tipo_servico=tipo,
         cidade_origem=data.get('origem_cep', ''),
         cidade_destino=data.get('destino_cep', ''),
         observacoes=(
@@ -798,33 +820,43 @@ def receber_lead_site():
     db.session.commit()
     logger.info(f"Lead recebido do site: {nome} ({source})")
 
+    # ── Notificação interna por email ────────────────────────────────────────
     corpo_html = f"""
     <html><body style="font-family:Arial,sans-serif;color:#222;max-width:600px;margin:auto">
       <div style="background:#0f1f3d;padding:20px;text-align:center;border-radius:8px 8px 0 0">
-        <h1 style="color:#fff;margin:0;font-size:20px">Novo Lead — Legacy Moving</h1>
+        <h1 style="color:#fff;margin:0;font-size:20px">🔔 Novo Lead recebido — Legacy Moving</h1>
       </div>
       <div style="background:#f8f9fa;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e5e7eb">
         <table style="width:100%;border-collapse:collapse">
           <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;width:120px">Nome</td>
               <td style="padding:8px 0;font-weight:600">{nome}</td></tr>
           <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Telefone</td>
-              <td style="padding:8px 0">{telefone or '-'}</td></tr>
+              <td style="padding:8px 0">{telefone or '—'}</td></tr>
           <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Email</td>
-              <td style="padding:8px 0">{email_lead or '-'}</td></tr>
-          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Servico</td>
+              <td style="padding:8px 0">{email or '—'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Serviço</td>
               <td style="padding:8px 0">{tipo}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Origem CEP</td>
+              <td style="padding:8px 0">{data.get('origem_cep','') or '—'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Destino CEP</td>
+              <td style="padding:8px 0">{data.get('destino_cep','') or '—'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Data desejada</td>
+              <td style="padding:8px 0">{data.get('data_desejada','') or '—'}</td></tr>
           <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Fonte</td>
               <td style="padding:8px 0">{source}</td></tr>
         </table>
+        <div style="margin-top:20px;padding:12px;background:#fff;border-left:4px solid #0f1f3d;border-radius:4px">
+          <p style="margin:0;font-size:13px;color:#6b7280">Entre no ERP para acompanhar este lead e iniciar o atendimento.</p>
+        </div>
       </div>
       <p style="text-align:center;font-size:11px;color:#9ca3af;margin-top:12px">Legacy Moving · legacymovingbr@gmail.com</p>
     </body></html>
     """
     _enviar_email(
         destinatario=LEGACY_EMAIL,
-        assunto=f"Novo Lead: {nome} — {tipo} ({source})",
+        assunto=f"🔔 Novo Lead: {nome} — {tipo} ({source})",
         corpo_html=corpo_html,
-        corpo_texto=f"Novo lead:\nNome: {nome}\nTelefone: {telefone}\nEmail: {email_lead}\nServico: {tipo}"
+        corpo_texto=f"Novo lead recebido:\nNome: {nome}\nTelefone: {telefone}\nEmail: {email}\nServiço: {tipo}"
     )
 
     return jsonify({"status": "ok", "id": lead.id, "mensagem": "Lead recebido com sucesso"})
@@ -1025,6 +1057,7 @@ def criar_cliente():
     )
     db.session.add(c)
     db.session.commit()
+    enqueue_backup('cliente', _cliente_dict(c))
     return jsonify(_cliente_dict(c)), 201
 
 
@@ -1037,6 +1070,7 @@ def atualizar_cliente(id):
         if f in data:
             setattr(c, f, data[f])
     db.session.commit()
+    enqueue_backup('cliente', _cliente_dict(c))
     return jsonify(_cliente_dict(c))
 
 
@@ -1354,6 +1388,7 @@ def criar_orcamento():
     )
     db.session.add(o)
     db.session.commit()
+    enqueue_backup('orcamento', _orc_dict(o))
     return jsonify(_orc_dict(o)), 201
 
 
@@ -1387,6 +1422,7 @@ def atualizar_orcamento(id):
             return err("justificativa é obrigatória ao rejeitar ou cancelar")
         o.status = novo_status
     db.session.commit()
+    enqueue_backup('orcamento', _orc_dict(o))
     return jsonify(_orc_dict(o))
 
 
@@ -1413,6 +1449,7 @@ def aprovar_orcamento(id):
         )
         db.session.add(cad)
     db.session.commit()
+    enqueue_backup('orcamento', _orc_dict(o))
     cad = CadastroComplementar.query.filter_by(orcamento_id=id).first()
     return jsonify({"orcamento": _orc_dict(o), "cadastro": _cadastro_dict(cad)})
 
@@ -1507,6 +1544,7 @@ def gerar_contrato_do_cadastro(id):
         con.drive_url = url
 
     db.session.commit()
+    enqueue_backup('contrato', _contrato_dict(con))
     return jsonify(_contrato_dict(con)), 201
 
 
@@ -1538,6 +1576,7 @@ def atualizar_contrato(id):
     if 'status' in data:
         c.status = data['status']
     db.session.commit()
+    enqueue_backup('contrato', _contrato_dict(c))
     return jsonify(_contrato_dict(c))
 
 
@@ -1569,6 +1608,7 @@ def gerar_os_do_contrato(id):
         os_.drive_url = url
 
     db.session.commit()
+    enqueue_backup('os', _os_dict(os_))
     return jsonify(_os_dict(os_)), 201
 
 
@@ -1626,6 +1666,7 @@ def criar_os():
     db.session.commit()
     _sync_programacao_os(os_)
     db.session.commit()
+    enqueue_backup('os', _os_dict(os_))
     return jsonify(_os_dict(os_)), 201
 
 
@@ -1705,6 +1746,8 @@ def concluir_os(id):
         rec.drive_url = url
 
     db.session.commit()
+    enqueue_backup('os', _os_dict(os_))
+    enqueue_backup('recibo', _recibo_dict(rec))
     return jsonify({"os": _os_dict(os_), "recibo": _recibo_dict(rec)})
 
 
