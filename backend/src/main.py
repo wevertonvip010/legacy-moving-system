@@ -2,6 +2,9 @@ import os
 import sys
 import json
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -127,8 +130,13 @@ def _cliente_dict(c):
 
 
 def _orc_dict(o):
+    cli = Cliente.query.get(o.cliente_id) if o.cliente_id else None
+    lead = Lead.query.get(o.lead_id) if o.lead_id else None
+    email_c = (cli.email if cli else '') or (lead.email if lead else '') or ''
+    telefone_c = (cli.telefone if cli else '') or (lead.telefone if lead else '') or ''
     return {
         "id": o.id, "numero": o.numero, "cliente": o.cliente, "cliente_id": o.cliente_id,
+        "email_cliente": email_c, "telefone_cliente": telefone_c,
         "vendedor_id": o.vendedor_id, "lead_id": o.lead_id,
         "tipo_servico": o.tipo_servico,
         "data_prevista": o.data_prevista.isoformat() if o.data_prevista else None,
@@ -171,8 +179,11 @@ def _cadastro_dict(c):
 
 
 def _contrato_dict(c):
+    cli = Cliente.query.get(c.cliente_id) if c.cliente_id else None
     return {
         "id": c.id, "numero": c.numero, "cliente": c.cliente, "cliente_id": c.cliente_id,
+        "email_cliente": (cli.email if cli else '') or '',
+        "telefone_cliente": (cli.telefone if cli else '') or '',
         "orcamento_id": c.orcamento_id, "tipo_servico": c.tipo_servico,
         "endereco_origem": c.endereco_origem, "endereco_destino": c.endereco_destino,
         "data_execucao": c.data_execucao.isoformat() if c.data_execucao else None,
@@ -209,9 +220,14 @@ def _os_dict(o):
 
 
 def _recibo_dict(r):
+    cli = Cliente.query.get(r.cliente_id) if r.cliente_id else None
+    os_ = OrdemServico.query.get(r.os_id) if r.os_id else None
     return {
         "id": r.id, "numero": r.numero, "os_id": r.os_id,
+        "os_numero": os_.numero if os_ else None,
         "cliente": r.cliente, "cliente_id": r.cliente_id,
+        "email_cliente": (cli.email if cli else '') or '',
+        "telefone_cliente": (cli.telefone if cli else '') or '',
         "servico_realizado": r.servico_realizado,
         "valor_cobrado": r.valor_cobrado, "forma_pagamento": r.forma_pagamento,
         "data_pagamento": r.data_pagamento.isoformat() if r.data_pagamento else None,
@@ -702,6 +718,116 @@ def deletar_lead(id):
     l.status = 'perdido'
     db.session.commit()
     return jsonify({"status": "perdido"})
+
+
+# ── EMAIL UTILITÁRIO ─────────────────────────────────────────────────────────
+LEGACY_EMAIL    = 'legacymovingbr@gmail.com'
+EMAIL_SENHA_APP = os.environ.get('EMAIL_SENHA_APP', '')
+
+def _enviar_email(destinatario, assunto, corpo_html, corpo_texto=''):
+    """Envia email via Gmail SMTP. Falha silenciosa se credenciais nao configuradas."""
+    if not EMAIL_SENHA_APP:
+        logger.warning("EMAIL_SENHA_APP nao configurada — email nao enviado.")
+        return False
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = assunto
+        msg['From']    = f'Legacy Moving <{LEGACY_EMAIL}>'
+        msg['To']      = destinatario
+        if corpo_texto:
+            msg.attach(MIMEText(corpo_texto, 'plain', 'utf-8'))
+        msg.attach(MIMEText(corpo_html, 'html', 'utf-8'))
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as srv:
+            srv.login(LEGACY_EMAIL, EMAIL_SENHA_APP)
+            srv.sendmail(LEGACY_EMAIL, destinatario, msg.as_string())
+        logger.info(f"Email enviado para {destinatario}: {assunto}")
+        return True
+    except Exception as e:
+        logger.error(f"Falha ao enviar email: {e}")
+        return False
+
+
+# ── ENDPOINT PUBLICO — RECEBE LEADS DO SITE ──────────────────────────────────
+LEAD_SITE_AUTH = os.environ.get('SITE_TOKEN', 'legacy-site-2026-token')
+
+@app.route('/api/leads/site', methods=['POST'])
+def receber_lead_site():
+    """Endpoint publico — recebe leads do site institucional sem JWT."""
+    token = request.headers.get('X-Site-Token') or (request.json or {}).get('_token', '')
+    if token != LEAD_SITE_AUTH:
+        return err("Token invalido", 403)
+
+    data = request.json or {}
+    source = data.get('source', 'site')
+    nome = data.get('nome') or data.get('contact', '')
+    telefone = data.get('telefone', '')
+    email_lead = data.get('email', '')
+
+    if source == 'guia-legacy':
+        channel = data.get('channel', 'email')
+        contact = data.get('contact', '')
+        if channel == 'email':
+            email_lead = contact
+        else:
+            telefone = contact
+        nome = contact or 'Lead Guia Legacy'
+
+    if not nome:
+        return err("Nome ou contato e obrigatorio")
+
+    servico_map = {
+        'residencial': 'residencial', 'corporativo': 'corporativo',
+        'storage': 'guarda_moveis', 'especiais': 'icamento', 'naosei': 'residencial',
+    }
+    tipo = servico_map.get(data.get('servico', ''), 'residencial')
+
+    lead = Lead(
+        nome=nome, telefone=telefone or 'nao informado', email=email_lead,
+        origem='site', tipo_servico=tipo,
+        cidade_origem=data.get('origem_cep', ''),
+        cidade_destino=data.get('destino_cep', ''),
+        observacoes=(
+            f"Data desejada: {data.get('data_desejada', '')}\n"
+            f"Tamanho: {data.get('tamanho', '')}\n"
+            f"Obs: {data.get('observacoes', '')}\n"
+            f"Fonte: {source} | Canal: {data.get('channel', '')}"
+        ).strip(),
+        status='novo',
+    )
+    db.session.add(lead)
+    db.session.commit()
+    logger.info(f"Lead recebido do site: {nome} ({source})")
+
+    corpo_html = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#222;max-width:600px;margin:auto">
+      <div style="background:#0f1f3d;padding:20px;text-align:center;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:20px">Novo Lead — Legacy Moving</h1>
+      </div>
+      <div style="background:#f8f9fa;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e5e7eb">
+        <table style="width:100%;border-collapse:collapse">
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;width:120px">Nome</td>
+              <td style="padding:8px 0;font-weight:600">{nome}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Telefone</td>
+              <td style="padding:8px 0">{telefone or '-'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Email</td>
+              <td style="padding:8px 0">{email_lead or '-'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Servico</td>
+              <td style="padding:8px 0">{tipo}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Fonte</td>
+              <td style="padding:8px 0">{source}</td></tr>
+        </table>
+      </div>
+      <p style="text-align:center;font-size:11px;color:#9ca3af;margin-top:12px">Legacy Moving · legacymovingbr@gmail.com</p>
+    </body></html>
+    """
+    _enviar_email(
+        destinatario=LEGACY_EMAIL,
+        assunto=f"Novo Lead: {nome} — {tipo} ({source})",
+        corpo_html=corpo_html,
+        corpo_texto=f"Novo lead:\nNome: {nome}\nTelefone: {telefone}\nEmail: {email_lead}\nServico: {tipo}"
+    )
+
+    return jsonify({"status": "ok", "id": lead.id, "mensagem": "Lead recebido com sucesso"})
 
 
 # ── MIRANTE (IA) ──────────────────────────────────────────────────────────────
