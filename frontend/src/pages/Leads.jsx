@@ -562,6 +562,28 @@ export default function Leads() {
                         ↺ Reativar
                       </button>
                     )}
+                    {l.email && (
+                      <button
+                        onClick={() => {
+                          const subject = encodeURIComponent('Legacy Moving — Seu pedido de orçamento');
+                          const body = encodeURIComponent([
+                            `Prezado(a) ${l.nome},`,
+                            '',
+                            'Obrigado pelo seu contato com a Legacy Moving!',
+                            '',
+                            `Recebemos sua solicitação de orçamento para serviço de ${l.tipo_servico || 'mudança'} e em breve um de nossos consultores entrará em contato para apresentar a melhor proposta.`,
+                            '',
+                            'Atenciosamente,',
+                            'Legacy Moving',
+                            'legacymovingbr@gmail.com',
+                          ].join('\n'));
+                          window.open(`mailto:${l.email}?subject=${subject}&body=${body}`, '_blank');
+                        }}
+                        title="Enviar email para o lead"
+                        style={{ padding: '4px 8px', background: '#dbeafe', color: '#1d4ed8', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
+                        ✉
+                      </button>
+                    )}
                     {isAdmin && (
                       <button onClick={() => excluirLead(l)} title="Excluir (apenas Admin)"
                         style={{ padding: '4px 7px', background: 'none', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
