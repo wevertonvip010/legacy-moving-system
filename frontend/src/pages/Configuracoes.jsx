@@ -331,6 +331,579 @@ const MODULOS_PERM = [
 ];
 const ACOES_PERM = ['ver', 'criar', 'editar', 'excluir'];
 
+// ── ABA INTELIGÊNCIA ARTIFICIAL ──────────────────────────────────────────────
+const PROVEDORES = [
+  { id: 'anthropic', label: 'Anthropic (Claude)', cor: '#7c3aed' },
+  { id: 'openai',    label: 'OpenAI (GPT)',        cor: '#16a34a' },
+  { id: 'google',    label: 'Google (Gemini)',      cor: '#2563eb' },
+];
+
+const PERIODOS = [
+  { v: 7,   l: '7 dias' },
+  { v: 30,  l: '30 dias' },
+  { v: 90,  l: '90 dias' },
+];
+
+const cardIA = {
+  background: '#fff', borderRadius: '12px',
+  boxShadow: '0 1px 4px rgba(0,0,0,0.08)', padding: '24px', marginBottom: '20px',
+};
+const secTitle = { fontSize: '15px', fontWeight: '700', color: '#111827', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' };
+const inputIA = { width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#fff' };
+const btnIA = { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 18px', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', border: 'none' };
+const tagStyle = (cor) => ({ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', background: cor + '15', color: cor, borderRadius: '99px', fontSize: '12px', fontWeight: '600' });
+
+const AbaIA = () => {
+  const [cfg, setCfg] = useState({});
+  const [apiKey, setApiKey] = useState('');
+  const [mostrarKey, setMostrarKey] = useState(false);
+  const [provedor, setProvedor] = useState('anthropic');
+  const [modeloPadrao, setModeloPadrao] = useState('claude-sonnet-4-6');
+  const [modelos, setModelos] = useState({ anthropic: [], openai: [], google: [] });
+  const [testando, setTestando] = useState(false);
+  const [testeResult, setTesteResult] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [uso, setUso] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [periodo, setPeriodo] = useState(30);
+  const [loadingUso, setLoadingUso] = useState(false);
+  const [permissoes, setPermissoes] = useState({});
+  const [abaLocal, setAbaLocal] = useState('config');
+  const [ativo, setAtivo] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  useEffect(() => { carregarConfig(); carregarModelos(); }, []);
+  useEffect(() => { if (abaLocal === 'monitoramento') carregarUso(); }, [abaLocal, periodo]);
+  useEffect(() => { if (abaLocal === 'logs') carregarLogs(); }, [abaLocal]);
+  useEffect(() => { if (abaLocal === 'permissoes') carregarPermissoes(); }, [abaLocal]);
+
+  const token = () => localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+  const hdr = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` });
+  const BASE = (window.API_URL || 'https://legacy-moving-backend.onrender.com');
+
+  const carregarConfig = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/ai/config`, { headers: hdr() });
+      const d = await r.json();
+      setCfg(d);
+      setProvedor(d.provider || 'anthropic');
+      setModeloPadrao(d.modelo_padrao || 'claude-sonnet-4-6');
+      setAtivo(d.ativo !== false && d.api_key_configurada);
+    } catch {}
+  };
+
+  const carregarModelos = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/ai/modelos`, { headers: hdr() });
+      const d = await r.json();
+      setModelos(d);
+    } catch {}
+  };
+
+  const carregarUso = async () => {
+    setLoadingUso(true);
+    try {
+      const r = await fetch(`${BASE}/api/ai/usage?days=${periodo}`, { headers: hdr() });
+      setUso(await r.json());
+    } catch {} finally { setLoadingUso(false); }
+  };
+
+  const carregarLogs = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/ai/logs?per_page=30`, { headers: hdr() });
+      const d = await r.json();
+      setLogs(d.items || []);
+    } catch {}
+  };
+
+  const carregarPermissoes = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/ai/permissions`, { headers: hdr() });
+      setPermissoes(await r.json());
+    } catch {}
+  };
+
+  const salvarKey = async () => {
+    if (!apiKey.trim()) { alert('Insira a API Key.'); return; }
+    setSalvando(true);
+    try {
+      const r = await fetch(`${BASE}/api/ai/set-key`, {
+        method: 'POST', headers: hdr(),
+        body: JSON.stringify({ provider: provedor, api_key: apiKey, modelo_padrao: modeloPadrao }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setApiKey('');
+        setTesteResult(d.teste);
+        setAtivo(d.teste?.ok);
+        await carregarConfig();
+        alert(`✅ API Key salva! ${d.key_preview}\nTeste: ${d.teste?.ok ? '✅ OK' : '❌ ' + d.teste?.message}`);
+      } else { alert('Erro: ' + (d.erro || 'desconhecido')); }
+    } catch (e) { alert('Erro: ' + e.message); } finally { setSalvando(false); }
+  };
+
+  const testarConexao = async () => {
+    setTestando(true); setTesteResult(null);
+    try {
+      const r = await fetch(`${BASE}/api/ai/test`, { method: 'POST', headers: hdr() });
+      const d = await r.json();
+      setTesteResult(d);
+    } catch (e) { setTesteResult({ ok: false, message: e.message }); } finally { setTestando(false); }
+  };
+
+  const toggleIA = async () => {
+    setToggling(true);
+    try {
+      const r = await fetch(`${BASE}/api/ai/toggle`, {
+        method: 'PUT', headers: hdr(), body: JSON.stringify({ ativo: !ativo }),
+      });
+      const d = await r.json();
+      if (d.ok) { setAtivo(d.ativo); }
+    } catch {} finally { setToggling(false); }
+  };
+
+  const salvarConfigGeral = async () => {
+    setSalvando(true);
+    try {
+      await fetch(`${BASE}/api/ai/config`, {
+        method: 'POST', headers: hdr(),
+        body: JSON.stringify({ provider: provedor, modelo_padrao: modeloPadrao }),
+      });
+      alert('✅ Configurações salvas.');
+      await carregarConfig();
+    } catch (e) { alert('Erro: ' + e.message); } finally { setSalvando(false); }
+  };
+
+  const salvarPermissoes = async () => {
+    try {
+      await fetch(`${BASE}/api/ai/permissions`, {
+        method: 'PUT', headers: hdr(), body: JSON.stringify(permissoes),
+      });
+      alert('✅ Permissões atualizadas.');
+    } catch (e) { alert('Erro: ' + e.message); }
+  };
+
+  const fmt_usd = (v) => `$${(v || 0).toFixed(4)}`;
+  const fmt_brl = (v) => `R$ ${(v || 0).toFixed(2)}`;
+  const fmt_num = (v) => (v || 0).toLocaleString('pt-BR');
+  const fmt_dt  = (s) => s ? new Date(s).toLocaleString('pt-BR') : '-';
+
+  const abas_local = [
+    { id: 'config',        label: 'Configuração' },
+    { id: 'monitoramento', label: 'Monitoramento' },
+    { id: 'logs',          label: 'Logs' },
+    { id: 'permissoes',    label: 'Permissões' },
+  ];
+
+  const provedorInfo = PROVEDORES.find(p => p.id === provedor) || PROVEDORES[0];
+  const modelosProvedor = modelos[provedor] || [];
+
+  return (
+    <div>
+      {/* Header da aba */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#111827', margin: 0 }}>
+            <Bot size={20} style={{ verticalAlign: 'middle', marginRight: '8px', color: '#7c3aed' }} />
+            Inteligência Artificial — Mirante
+          </h2>
+          <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
+            Integração oficial Anthropic · Camada multi-provedor · Controle total de acesso e consumo
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={tagStyle(ativo ? '#16a34a' : '#6b7280')}>
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: ativo ? '#16a34a' : '#9ca3af', display: 'inline-block' }} />
+            {ativo ? 'Ativa' : 'Inativa'}
+          </span>
+          <button
+            onClick={toggleIA}
+            disabled={toggling || !cfg.api_key_configurada}
+            style={{ ...btnIA, background: ativo ? '#fef2f2' : '#f0fdf4', color: ativo ? '#dc2626' : '#16a34a', fontSize: '13px' }}
+          >
+            {ativo ? 'Desativar IA' : 'Ativar IA'}
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-abas */}
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid #e5e7eb', marginBottom: '20px' }}>
+        {abas_local.map(a => (
+          <button key={a.id} onClick={() => setAbaLocal(a.id)} style={{
+            padding: '10px 16px', fontSize: '13px', fontWeight: '500', border: 'none',
+            background: 'none', cursor: 'pointer',
+            borderBottom: `2px solid ${abaLocal === a.id ? '#7c3aed' : 'transparent'}`,
+            color: abaLocal === a.id ? '#7c3aed' : '#6b7280',
+          }}>{a.label}</button>
+        ))}
+      </div>
+
+      {/* ── CONFIGURAÇÃO ───────────────────────────────────────────── */}
+      {abaLocal === 'config' && (
+        <div>
+          {/* Status da conexão */}
+          {cfg.api_key_configurada ? (
+            <div style={{ ...cardIA, background: '#f0fdf4', border: '1px solid #bbf7d0', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <CheckCircle size={20} color="#16a34a" />
+                <div>
+                  <p style={{ margin: 0, fontWeight: '700', color: '#15803d' }}>API Key configurada</p>
+                  <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#166534' }}>
+                    Provedor: {provedorInfo.label} · Modelo: {modeloPadrao}
+                  </p>
+                </div>
+                <button onClick={testarConexao} disabled={testando} style={{ ...btnIA, background: '#16a34a', color: '#fff', marginLeft: 'auto', fontSize: '13px' }}>
+                  <RefreshCw size={14} className={testando ? 'spin' : ''} />
+                  {testando ? 'Testando...' : 'Testar Conexão'}
+                </button>
+              </div>
+              {testeResult && (
+                <div style={{ marginTop: '12px', padding: '10px 14px', background: testeResult.ok ? '#dcfce7' : '#fef2f2', borderRadius: '8px', fontSize: '13px' }}>
+                  {testeResult.ok ? '✅' : '❌'} {testeResult.message}
+                  {testeResult.latency_ms > 0 && <span style={{ color: '#6b7280', marginLeft: '8px' }}>({testeResult.latency_ms}ms)</span>}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ ...cardIA, background: '#fef9c3', border: '1px solid #fde047', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <AlertCircle size={20} color="#ca8a04" />
+                <p style={{ margin: 0, fontWeight: '600', color: '#92400e' }}>
+                  API Key não configurada. A IA Mirante está offline.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Configuração do provedor */}
+          <div style={cardIA}>
+            <p style={secTitle}><Globe size={16} color="#7c3aed" /> Provedor de IA</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+              {PROVEDORES.map(p => (
+                <button key={p.id} onClick={() => setProvedor(p.id)} style={{
+                  padding: '14px', borderRadius: '10px', border: `2px solid ${provedor === p.id ? p.cor : '#e5e7eb'}`,
+                  background: provedor === p.id ? p.cor + '10' : '#fff', cursor: 'pointer',
+                  fontWeight: provedor === p.id ? '700' : '400', color: provedor === p.id ? p.cor : '#374151',
+                  fontSize: '13px', transition: 'all 0.15s',
+                }}>
+                  {p.label}
+                  {p.id !== 'anthropic' && <span style={{ display: 'block', fontSize: '11px', color: '#9ca3af', fontWeight: '400', marginTop: '4px' }}>Em breve</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* Modelo padrão */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
+                Modelo padrão
+              </label>
+              {modelosProvedor.length > 0 ? (
+                <select value={modeloPadrao} onChange={e => setModeloPadrao(e.target.value)} style={inputIA}>
+                  {modelosProvedor.map(m => (
+                    <option key={m.id} value={m.id}>{m.label} (ctx {m.contexto})</option>
+                  ))}
+                </select>
+              ) : (
+                <input value={modeloPadrao} onChange={e => setModeloPadrao(e.target.value)} style={inputIA} placeholder="claude-sonnet-4-6" />
+              )}
+            </div>
+
+            <button onClick={salvarConfigGeral} disabled={salvando} style={{ ...btnIA, background: '#7c3aed', color: '#fff' }}>
+              <Save size={14} /> {salvando ? 'Salvando...' : 'Salvar Configuração'}
+            </button>
+          </div>
+
+          {/* API Key */}
+          <div style={cardIA}>
+            <p style={secTitle}><Key size={16} color="#7c3aed" /> API Key — {provedorInfo.label}</p>
+            <div style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: '10px', padding: '14px', marginBottom: '16px', fontSize: '13px', color: '#6b21a8' }}>
+              🔐 A API Key é armazenada de forma segura no servidor. Nunca é exposta ao frontend nem registrada em logs.
+              Para obter sua key: <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" style={{ color: '#7c3aed', fontWeight: '600' }}>console.anthropic.com</a>
+            </div>
+            <div style={{ position: 'relative', marginBottom: '14px' }}>
+              <input
+                type={mostrarKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder="sk-ant-api03-..."
+                style={{ ...inputIA, paddingRight: '44px', fontFamily: 'monospace' }}
+              />
+              <button onClick={() => setMostrarKey(!mostrarKey)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
+                {mostrarKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={salvarKey} disabled={salvando || !apiKey.trim()} style={{ ...btnIA, background: '#7c3aed', color: '#fff' }}>
+                <Save size={14} /> {salvando ? 'Salvando...' : 'Salvar API Key'}
+              </button>
+              <button onClick={testarConexao} disabled={testando} style={{ ...btnIA, background: '#e0e7ff', color: '#3730a3' }}>
+                <RefreshCw size={14} /> {testando ? 'Testando...' : 'Testar Conexão'}
+              </button>
+            </div>
+          </div>
+
+          {/* Módulos com acesso */}
+          <div style={cardIA}>
+            <p style={secTitle}><Bot size={16} color="#7c3aed" /> Módulos com Acesso ao Mirante</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+              {['Chat Geral', 'Leads', 'Clientes', 'Financeiro', 'Estoque', 'Avarias', 'Painel Executivo', 'Metas', 'Manual do Sistema'].map(m => (
+                <div key={m} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: '#f5f3ff', borderRadius: '8px', fontSize: '13px', color: '#5b21b6', fontWeight: '500' }}>
+                  <CheckCircle size={14} color="#7c3aed" /> {m}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MONITORAMENTO ──────────────────────────────────────────── */}
+      {abaLocal === 'monitoramento' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <p style={{ margin: 0, fontWeight: '700', color: '#111827' }}>Painel de Consumo</p>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {PERIODOS.map(p => (
+                <button key={p.v} onClick={() => setPeriodo(p.v)} style={{
+                  padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
+                  border: `1px solid ${periodo === p.v ? '#7c3aed' : '#d1d5db'}`,
+                  background: periodo === p.v ? '#7c3aed' : '#fff',
+                  color: periodo === p.v ? '#fff' : '#374151', cursor: 'pointer',
+                }}>{p.l}</button>
+              ))}
+            </div>
+          </div>
+
+          {loadingUso ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>Carregando...</div>
+          ) : uso ? (
+            <>
+              {/* Cards de métricas */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
+                {[
+                  { label: 'Total de Consultas', valor: fmt_num(uso.total_consultas), cor: '#7c3aed', icon: <Bot size={18} /> },
+                  { label: 'Tokens Consumidos', valor: fmt_num(uso.total_tokens), cor: '#2563eb', icon: <Database size={18} /> },
+                  { label: 'Custo (USD)', valor: fmt_usd(uso.custo_total_usd), cor: '#16a34a', icon: <Key size={18} /> },
+                  { label: 'Custo (BRL ~)', valor: fmt_brl(uso.custo_total_brl), cor: '#ca8a04', icon: <Settings size={18} /> },
+                ].map(c => (
+                  <div key={c.label} style={{ ...cardIA, marginBottom: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <p style={{ margin: 0, fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>{c.label}</p>
+                      <span style={{ color: c.cor }}>{c.icon}</span>
+                    </div>
+                    <p style={{ margin: '8px 0 0', fontSize: '22px', fontWeight: '800', color: c.cor }}>{c.valor}</p>
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#9ca3af' }}>Últimos {periodo} dias</p>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                {/* Top usuários */}
+                <div style={cardIA}>
+                  <p style={secTitle}><Users size={16} color="#7c3aed" /> Usuários que mais utilizam</p>
+                  {(uso.top_usuarios || []).length === 0 ? (
+                    <p style={{ color: '#9ca3af', fontSize: '13px' }}>Nenhum dado ainda.</p>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ background: '#f5f3ff' }}>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#5b21b6' }}>Usuário</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600', color: '#5b21b6' }}>Consultas</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600', color: '#5b21b6' }}>Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {uso.top_usuarios.map((u, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '8px 10px', color: '#374151' }}>{u.nome}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600', color: '#7c3aed' }}>{fmt_num(u.consultas)}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', color: '#6b7280' }}>{fmt_num(u.tokens)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Top módulos */}
+                <div style={cardIA}>
+                  <p style={secTitle}><Globe size={16} color="#7c3aed" /> Módulos mais utilizados</p>
+                  {(uso.top_modulos || []).length === 0 ? (
+                    <p style={{ color: '#9ca3af', fontSize: '13px' }}>Nenhum dado ainda.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {uso.top_modulos.slice(0, 6).map((m, i) => {
+                        const max = uso.top_modulos[0]?.consultas || 1;
+                        const pct = Math.round((m.consultas / max) * 100);
+                        return (
+                          <div key={i}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                              <span style={{ color: '#374151', fontWeight: '500' }}>{m.modulo}</span>
+                              <span style={{ color: '#7c3aed', fontWeight: '700' }}>{m.consultas}</span>
+                            </div>
+                            <div style={{ height: '6px', background: '#e9d5ff', borderRadius: '99px' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: '#7c3aed', borderRadius: '99px' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+              <Bot size={40} color="#d1d5db" style={{ marginBottom: '10px' }} />
+              <p>Nenhum dado de uso ainda.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── LOGS ───────────────────────────────────────────────────── */}
+      {abaLocal === 'logs' && (
+        <div style={cardIA}>
+          <p style={secTitle}><Database size={16} color="#7c3aed" /> Histórico de Consultas</p>
+          {logs.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: '13px' }}>Nenhum log ainda.</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f5f3ff' }}>
+                    {['Data/Hora', 'Usuário', 'Módulo', 'Modelo', 'Tokens', 'Custo USD', 'Status'].map(h => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#5b21b6', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map(l => (
+                    <tr key={l.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '7px 10px', color: '#6b7280', whiteSpace: 'nowrap' }}>{fmt_dt(l.timestamp)}</td>
+                      <td style={{ padding: '7px 10px', color: '#374151', fontWeight: '500' }}>{l.usuario}</td>
+                      <td style={{ padding: '7px 10px' }}><span style={tagStyle('#7c3aed')}>{l.modulo}</span></td>
+                      <td style={{ padding: '7px 10px', color: '#6b7280', fontFamily: 'monospace', fontSize: '11px' }}>{l.model}</td>
+                      <td style={{ padding: '7px 10px', color: '#2563eb', fontWeight: '600' }}>{fmt_num(l.tokens)}</td>
+                      <td style={{ padding: '7px 10px', color: '#16a34a', fontWeight: '600' }}>{fmt_usd(l.custo_usd)}</td>
+                      <td style={{ padding: '7px 10px' }}>
+                        {l.success
+                          ? <span style={tagStyle('#16a34a')}>✓ OK</span>
+                          : <span style={tagStyle('#dc2626')} title={l.erro}>✗ Erro</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PERMISSÕES ─────────────────────────────────────────────── */}
+      {abaLocal === 'permissoes' && (
+        <div>
+          <div style={cardIA}>
+            <p style={secTitle}><Shield size={16} color="#7c3aed" /> Controle de Acesso</p>
+
+            {/* Setores bloqueados */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '10px' }}>
+                Setores sem acesso à IA
+              </label>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {['comercial', 'operacional', 'financeiro'].map(s => {
+                  const bloqueados = permissoes.setores_bloqueados || [];
+                  const ativo = bloqueados.includes(s);
+                  return (
+                    <button key={s} onClick={() => {
+                      const arr = ativo ? bloqueados.filter(x => x !== s) : [...bloqueados, s];
+                      setPermissoes(p => ({ ...p, setores_bloqueados: arr }));
+                    }} style={{
+                      padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                      border: `2px solid ${ativo ? '#dc2626' : '#d1d5db'}`,
+                      background: ativo ? '#fef2f2' : '#f9fafb',
+                      color: ativo ? '#dc2626' : '#374151',
+                    }}>
+                      {ativo ? <Lock size={12} style={{ marginRight: '4px' }} /> : <Unlock size={12} style={{ marginRight: '4px' }} />}
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>Admin sempre tem acesso total.</p>
+            </div>
+
+            {/* Limite de tokens por usuário */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
+                Limite de tokens por usuário/dia (0 = ilimitado)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={permissoes.limite_tokens_usuario || 0}
+                onChange={e => setPermissoes(p => ({ ...p, limite_tokens_usuario: parseInt(e.target.value) || 0 }))}
+                style={{ ...inputIA, width: '200px' }}
+              />
+            </div>
+
+            {/* Modelos autorizados */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '10px' }}>
+                Modelos autorizados (sem restrição = todos)
+              </label>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-8'].map(m => {
+                  const autorizados = permissoes.modelos_autorizados || [];
+                  const ativado = autorizados.length === 0 || autorizados.includes(m);
+                  return (
+                    <button key={m} onClick={() => {
+                      let arr = autorizados.length === 0 ? ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-8'] : [...autorizados];
+                      if (ativado) arr = arr.filter(x => x !== m);
+                      else arr.push(m);
+                      setPermissoes(p => ({ ...p, modelos_autorizados: arr }));
+                    }} style={{
+                      padding: '6px 14px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer',
+                      border: `1px solid ${ativado ? '#7c3aed' : '#d1d5db'}`,
+                      background: ativado ? '#f5f3ff' : '#fff',
+                      color: ativado ? '#7c3aed' : '#9ca3af',
+                      fontWeight: ativado ? '600' : '400',
+                    }}>{m}</button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button onClick={salvarPermissoes} style={{ ...btnIA, background: '#7c3aed', color: '#fff' }}>
+              <Save size={14} /> Salvar Permissões
+            </button>
+          </div>
+
+          {/* Info de segurança */}
+          <div style={{ ...cardIA, background: '#f8fafc', border: '1px solid #e5e7eb' }}>
+            <p style={{ ...secTitle, color: '#374151' }}><Shield size={16} color="#6b7280" /> Boas Práticas de Segurança</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#6b7280' }}>
+              {[
+                'A API Key nunca é transmitida ao frontend — apenas o status (configurada/não configurada).',
+                'A chave é criptografada com o JWT secret do servidor antes de armazenar no banco.',
+                'Toda comunicação com a Anthropic usa HTTPS/TLS 1.3.',
+                'Logs de uso nunca registram o conteúdo completo das mensagens — apenas metadados.',
+                'Rotação de key: ao salvar uma nova chave, a anterior é substituída automaticamente.',
+              ].map((t, i) => (
+                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                  <CheckCircle size={14} color="#16a34a" style={{ marginTop: '2px', flexShrink: 0 }} />
+                  <span>{t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Configuracoes = () => {
   const [abaAtiva, setAbaAtiva] = useState('usuarios');
   const [modalUsuario, setModalUsuario] = useState(false);
@@ -846,12 +1419,16 @@ const Configuracoes = () => {
   /* ─── Aba Documentos ───────────────────────────────── */
   const renderAbaDocumentos = () => <AbaDocumentos />;
 
+  /* ─── Aba IA ────────────────────────────────────────── */
+  const renderAbaIA = () => <AbaIA />;
+
   /* ─── Main render ──────────────────────────────────── */
   const abas = [
     { id: 'usuarios', label: 'Usuários', icon: <Users size={14} /> },
     { id: 'empresa', label: 'Empresa', icon: <Building2 size={14} /> },
     { id: 'documentos', label: 'Documentos', icon: <FileText size={14} /> },
     { id: 'google-calendar', label: 'Google Calendar', icon: <Calendar size={14} />, extra: isConfigured && <CheckCircle size={11} color="#16a34a" /> },
+    { id: 'ia', label: 'Inteligência Artificial', icon: <Bot size={14} /> },
     { id: 'sistema', label: 'Sistema', icon: <Settings size={14} /> },
   ];
 
@@ -897,6 +1474,7 @@ const Configuracoes = () => {
             {abaAtiva === 'empresa' && renderAbaEmpresa()}
             {abaAtiva === 'documentos' && renderAbaDocumentos()}
             {abaAtiva === 'google-calendar' && renderAbaGoogleCalendar()}
+            {abaAtiva === 'ia' && renderAbaIA()}
             {abaAtiva === 'sistema' && renderAbaSistema()}
           </div>
         </div>

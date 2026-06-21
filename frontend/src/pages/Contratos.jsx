@@ -77,18 +77,22 @@ const Contratos = () => {
     const body = [
       `Prezado(a) ${c.cliente},`,
       ``,
-      `Segue o resumo do seu contrato:`,
+      `Segue o resumo do seu contrato com a Legacy Moving:`,
       ``,
       `Contrato: ${c.numero}`,
       `Tipo: ${TIPO_LABEL[c.tipo_servico] || c.tipo_servico || '—'}`,
       `Valor Total: ${fmt(c.valor)}`,
       c.data_execucao ? `Data de Execução: ${fmtData(c.data_execucao)}` : '',
+      c.endereco_origem ? `Origem: ${c.endereco_origem}` : '',
+      c.endereco_destino ? `Destino: ${c.endereco_destino}` : '',
       c.drive_url ? `\nContrato PDF: ${c.drive_url}` : '',
       ``,
       `Atenciosamente,`,
       `Legacy Moving`,
+      `legacymovingbr@gmail.com`,
     ].filter(Boolean).join('\n');
-    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+    const to = c.email_cliente || '';
+    window.open(`mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
   const gerarOS = async (c) => {

@@ -72,6 +72,31 @@ const ReciboVisual = ({ recibo, onClose }) => {
     window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, '_blank');
   };
 
+  const handleEmail = () => {
+    const subject = `Recibo ${recibo.numero} — Legacy Moving`;
+    const body = [
+      `Prezado(a) ${recibo.cliente},`,
+      ``,
+      `Segue o recibo referente ao serviço realizado pela Legacy Moving:`,
+      ``,
+      `Nº do Recibo: ${recibo.numero}`,
+      recibo.os_numero ? `OS: ${recibo.os_numero}` : '',
+      `Serviço: ${recibo.servico_realizado || 'Serviço de mudança'}`,
+      ``,
+      `Valor: ${fmt(recibo.valor_cobrado)}`,
+      recibo.forma_pagamento ? `Pagamento: ${FORMAS_LABEL[recibo.forma_pagamento] || recibo.forma_pagamento}` : '',
+      recibo.data_pagamento ? `Data: ${fmtDate(recibo.data_pagamento)}` : '',
+      `Status: ${STATUS_LABEL[recibo.status] || recibo.status}`,
+      recibo.observacoes ? `\nObs: ${recibo.observacoes}` : '',
+      ``,
+      `Atenciosamente,`,
+      `Legacy Moving`,
+      `legacymovingbr@gmail.com`,
+    ].filter(Boolean).join('\n');
+    const to = recibo.email_cliente || '';
+    window.open(`mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+  };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '20px' }}>
       <div style={{ background: 'white', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflow: 'auto' }}>
@@ -82,6 +107,10 @@ const ReciboVisual = ({ recibo, onClose }) => {
             <button onClick={handleWhatsApp}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#25d366', color: 'white', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
               <Share2 size={13} /> WhatsApp
+            </button>
+            <button onClick={handleEmail}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#1d4ed8', color: 'white', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>
+              ✉ Email
             </button>
             <button onClick={handlePrint}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '500' }}>

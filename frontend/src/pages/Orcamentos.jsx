@@ -216,6 +216,41 @@ export default function Orcamentos() {
     setModal(tipo); // 'rejeitar' | 'cancelar'
   };
 
+  const enviarEmail = (o) => {
+    const fmtAddr = (rua, num, bairro, cidade, estado) =>
+      [rua, num, bairro, cidade, estado].filter(Boolean).join(', ');
+    const fmt2 = (v) => v ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'R$ 0,00';
+    const origem  = fmtAddr(o.orig_rua, o.orig_numero, o.orig_bairro, o.orig_cidade, o.orig_estado);
+    const destino = fmtAddr(o.dest_rua, o.dest_numero, o.dest_bairro, o.dest_cidade, o.dest_estado);
+    const total   = fmt2((o.valor_servico || 0) + (o.valor_seguro || 0));
+    const subject = `Orçamento ${o.numero} — Legacy Moving`;
+    const body = [
+      `Prezado(a) ${o.cliente},`,
+      ``,
+      `Segue o orçamento elaborado para o seu serviço:`,
+      ``,
+      `Orçamento: ${o.numero}`,
+      `Tipo: ${o.tipo_servico || 'Residencial'}`,
+      origem  ? `Origem: ${origem}`  : '',
+      destino ? `Destino: ${destino}` : '',
+      o.data_prevista ? `Data Prevista: ${new Date(o.data_prevista).toLocaleDateString('pt-BR')}` : '',
+      ``,
+      `Valor do Serviço: ${fmt2(o.valor_servico || 0)}`,
+      (o.valor_seguro > 0) ? `Seguro: ${fmt2(o.valor_seguro)}` : '',
+      `Total: ${total}`,
+      o.condicoes_pagamento ? `Pagamento: ${o.condicoes_pagamento}` : '',
+      o.observacoes_comerciais ? `\nObs: ${o.observacoes_comerciais}` : '',
+      ``,
+      `Para confirmar ou tirar dúvidas, entre em contato conosco.`,
+      ``,
+      `Atenciosamente,`,
+      `Legacy Moving`,
+      `legacymovingbr@gmail.com`,
+    ].filter(Boolean).join('\n');
+    const to = o.email_cliente || o.email || '';
+    window.open(`mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+  };
+
   const enviarWhatsApp = (o) => {
     const fmtAddr = (rua, num, bairro, cidade, estado) =>
       [rua, num, bairro, cidade, estado].filter(Boolean).join(', ');
@@ -334,6 +369,10 @@ export default function Orcamentos() {
                         <button onClick={() => enviarWhatsApp(o)} title="Enviar orçamento via WhatsApp"
                           style={{ padding: '4px 8px', background: '#dcfce7', color: '#15803d', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
                           <Share2 size={11} /> WA
+                        </button>
+                        <button onClick={() => enviarEmail(o)} title="Enviar orçamento por email"
+                          style={{ padding: '4px 8px', background: '#dbeafe', color: '#1d4ed8', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
+                          ✉ Email
                         </button>
                         {o.status === 'aprovado' && (
                           <button onClick={() => navigate(`/cadastro-complementar?orcamento_id=${o.id}`)}

@@ -88,8 +88,10 @@ const Sidebar = () => {
 
   return (
     <div style={{
-      background: '#0f1f3d', color: 'white', width: '220px', minHeight: '100vh',
+      background: '#0f1f3d', color: 'white', width: '220px',
+      height: '100vh', position: 'sticky', top: 0,
       display: 'flex', flexDirection: 'column', flexShrink: 0,
+      overflow: 'hidden',
     }}>
       {/* Logo */}
       <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -135,7 +137,7 @@ const Sidebar = () => {
       <BuscaGlobal />
 
       {/* Menu agrupado */}
-      <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
+      <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
         {menuGroups.map((group) => {
           const visibleItems = group.items.filter(item =>
             isAdmin || !item.modulo || pode(item.modulo, 'ver')

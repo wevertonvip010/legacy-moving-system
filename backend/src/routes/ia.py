@@ -1,15 +1,35 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-import openai
 import os
 from datetime import datetime, timedelta
-from src.config import Config
-from src.models import User
 
 ia_bp = Blueprint('ia', __name__)
 
-# Configurar OpenAI
-openai.api_key = Config.OPENAI_API_KEY
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+def _get_user(user_id):
+    try:
+        from database_real import User
+        u = User.query.get(int(user_id))
+        if u:
+            return {"name": u.name, "role": u.role, "id": u.id}
+    except Exception:
+        pass
+    return {"name": "Colaborador", "role": "geral", "id": None}
+
+
+def _ia_chat(messages, system="", user_id=None, modulo="mirante", max_tokens=512):
+    """Chama ai_service com Anthropic; retorna (content, error_or_None)."""
+    try:
+        from ai_service import ai
+        result = ai.chat(
+            messages=messages, system=system,
+            user_id=user_id, modulo=modulo, max_tokens=max_tokens,
+        )
+        err = result.get("error")
+        return result.get("content", ""), err if err else None
+    except Exception as e:
+        return None, str(e)
 
 @ia_bp.route('/feedback-desempenho', methods=['POST'])
 @jwt_required()
@@ -255,64 +275,57 @@ def mensagem_motivacional():
 @ia_bp.route('/assistente-chat', methods=['POST'])
 @jwt_required()
 def assistente_chat():
-    """IA Mirante - Chat do assistente interno"""
+    """IA Mirante - Chat do assistente interno (usa ai_service / Anthropic)"""
     try:
         user_id = get_jwt_identity()
-        user = User.get_by_id(user_id)
-        
-        data = request.get_json()
-        pergunta = data.get('pergunta', '')
+        user = _get_user(user_id)
+
+        data = request.get_json() or {}
+        pergunta = data.get('pergunta', '').strip()
         contexto = data.get('contexto', 'geral')
-        
-        prompt = f"""
-        Você é a IA Mirante, assistente pessoal de {user['name']} na VIP Mudanças.
-        
-        Pergunta: {pergunta}
-        Contexto: {contexto}
-        
-        Responda de forma:
-        - Amigável e profissional
-        - Específica para o negócio de mudanças
-        - Prática e útil
-        - Máximo 150 palavras
-        
-        Se a pergunta for sobre vendas, dê dicas específicas.
-        Se for sobre operações, foque em eficiência.
-        Se for pessoal/motivacional, seja encorajadora.
-        """
-        
-        if not Config.OPENAI_API_KEY:
-            respostas_simuladas = {
-                'vendas': f"Olá {user['name']}! Para melhorar suas vendas, foque no follow-up rápido e na personalização do atendimento. Cada cliente é único!",
-                'operacional': f"Oi {user['name']}! Para otimizar operações, sugiro padronizar processos e manter comunicação clara com a equipe.",
-                'geral': f"Oi {user['name']}! Sou sua assistente Mirante. Como posso ajudar você hoje? Estou aqui para apoiar seu sucesso na VIP Mudanças!"
+        historico = data.get('historico', [])
+
+        if not pergunta:
+            return jsonify({"error": "Pergunta não pode ser vazia."}), 400
+
+        nome = user.get('name', 'Colaborador')
+        system = (
+            f"Você é a IA Mirante, assistente da Legacy Moving — empresa premium de mudanças. "
+            f"Você está conversando com {nome}. "
+            "Seja profissional, objetiva e específica para o setor de mudanças e logística."
+        )
+
+        messages = []
+        for h in historico[-8:]:
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": str(h["content"])})
+        messages.append({"role": "user", "content": pergunta})
+
+        resposta, erro = _ia_chat(
+            messages=messages,
+            system=system,
+            user_id=int(user_id) if user_id else None,
+            modulo=f"mirante_{contexto}",
+            max_tokens=512,
+        )
+
+        # Fallback estático se IA offline
+        if not resposta or erro == "no_api_key":
+            fallbacks = {
+                'vendas':      f"Olá {nome}! Para melhorar suas vendas, foque no follow-up rápido e na personalização do atendimento.",
+                'operacional': f"Oi {nome}! Para otimizar operações, sugiro padronizar processos e manter comunicação clara com a equipe.",
+                'financeiro':  f"Oi {nome}! Para controle financeiro, monitore o fluxo de caixa diariamente e mantenha os custos operacionais sempre mapeados.",
+                'geral':       f"Oi {nome}! Sou a Mirante. Configure a API Key em Configurações > Inteligência Artificial para ativar minhas capacidades completas.",
             }
-            resposta = respostas_simuladas.get(contexto, respostas_simuladas['geral'])
-        else:
-            try:
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": f"Você é a IA Mirante, assistente pessoal amigável de {user['name']} na VIP Mudanças. Seja útil e motivadora."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=180,
-                    temperature=0.7
-                )
-                
-                resposta = response.choices[0].message.content.strip()
-                
-            except Exception as e:
-                print(f"Erro na API OpenAI: {e}")
-                resposta = f"Oi {user['name']}! Estou aqui para ajudar. No momento tenho algumas dificuldades técnicas, mas continue focado em suas metas!"
-        
+            resposta = fallbacks.get(contexto, fallbacks['geral'])
+
         return jsonify({
             "resposta": resposta,
-            "colaborador": user['name'],
+            "colaborador": nome,
             "assistente": "IA Mirante",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }), 200
-        
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

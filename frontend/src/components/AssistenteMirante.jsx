@@ -132,9 +132,85 @@ const AssistenteMirante = () => {
 
   const formatText = (text) => {
     if (!text) return '';
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br/>');
+    const lines = text.split('\n');
+    const html = [];
+    let inTable = false;
+    let inList = false;
+    let inOl = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const bold = s => s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+      // Tabela markdown
+      if (line.trim().startsWith('|')) {
+        if (!inTable) {
+          if (inList) { html.push('</ul>'); inList = false; }
+          if (inOl) { html.push('</ol>'); inOl = false; }
+          html.push('<table style="border-collapse:collapse;width:100%;font-size:11px;margin:6px 0">');
+          inTable = true;
+        }
+        if (line.match(/^\|[\s\-:|]+\|/)) continue; // separador
+        const cells = line.split('|').slice(1, -1);
+        const nextIsSep = lines[i + 1] && lines[i + 1].match(/^\|[\s\-:|]+\|/);
+        const tag = nextIsSep ? 'th' : 'td';
+        const style = nextIsSep
+          ? 'style="border:1px solid #d1d5db;padding:3px 7px;background:#f3f4f6;font-weight:600"'
+          : 'style="border:1px solid #e5e7eb;padding:3px 7px"';
+        html.push(`<tr>${cells.map(c => `<${tag} ${style}>${bold(c.trim())}</${tag}>`).join('')}</tr>`);
+        continue;
+      } else if (inTable) {
+        html.push('</table>');
+        inTable = false;
+      }
+
+      // Headers
+      const h3 = line.match(/^###\s+(.*)/);
+      const h2 = line.match(/^##\s+(.*)/);
+      const h1 = line.match(/^#\s+(.*)/);
+      if (h3) {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        html.push(`<p style="font-weight:700;font-size:12px;margin:8px 0 3px;color:#374151">${bold(h3[1])}</p>`);
+      } else if (h2) {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        html.push(`<p style="font-weight:700;font-size:13px;margin:10px 0 4px;color:#1f2937">${bold(h2[1])}</p>`);
+      } else if (h1) {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        html.push(`<p style="font-weight:700;font-size:14px;margin:10px 0 4px;color:#111827">${bold(h1[1])}</p>`);
+      }
+      // Lista com marcador
+      else if (line.match(/^[-*•]\s/)) {
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        if (!inList) { html.push('<ul style="margin:4px 0;padding-left:18px">'); inList = true; }
+        html.push(`<li style="margin:2px 0">${bold(line.replace(/^[-*•]\s/, ''))}</li>`);
+      }
+      // Lista numerada
+      else if (line.match(/^\d+\.\s/)) {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (!inOl) { html.push('<ol style="margin:4px 0;padding-left:18px">'); inOl = true; }
+        html.push(`<li style="margin:2px 0">${bold(line.replace(/^\d+\.\s/, ''))}</li>`);
+      }
+      // Linha vazia
+      else if (line.trim() === '') {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        html.push('<br style="line-height:0.5"/>');
+      }
+      // Texto normal
+      else {
+        if (inList) { html.push('</ul>'); inList = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+        html.push(`<span style="display:block;margin:1px 0">${bold(line)}</span>`);
+      }
+    }
+
+    if (inTable) html.push('</table>');
+    if (inList) html.push('</ul>');
+    if (inOl) html.push('</ol>');
+    return html.join('');
   };
 
   if (!user) return null;

@@ -663,6 +663,24 @@ class ConfigSistema(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ── LOG DE USO DE IA ─────────────────────────────────────────────────────────
+class AIUsageLog(db.Model):
+    """Registro de cada consulta à IA Mirante — para monitoramento e controle de custos."""
+    __tablename__ = 'ai_usage_log'
+    id              = db.Column(db.Integer, primary_key=True)
+    timestamp       = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    user_id         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    provider        = db.Column(db.String(50), default='anthropic')   # anthropic | openai | google
+    model           = db.Column(db.String(100))
+    modulo          = db.Column(db.String(100))                        # mirante_chat | leads | financeiro …
+    prompt_tokens   = db.Column(db.Integer, default=0)
+    completion_tokens = db.Column(db.Integer, default=0)
+    total_tokens    = db.Column(db.Integer, default=0)
+    custo_usd       = db.Column(db.Float, default=0.0)                # custo estimado em USD
+    success         = db.Column(db.Boolean, default=True)
+    error_msg       = db.Column(db.Text, nullable=True)
+
+
 # ── INICIALIZAÇÃO DO BANCO ───────────────────────────────────────────────────
 def init_db(app):
     with app.app_context():

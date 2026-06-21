@@ -1,0 +1,4 @@
+C:\Users\wever\AppData\Local\Microsoft\WindowsApps\python.exe
+C:\Users\wever\AppData\Local\Python\bin\python.exe
+C:\Users\wever\AppData\Local\Microsoft\WindowsApps\py.exe
+Arquivo n∆o encontrado
