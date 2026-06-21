@@ -565,17 +565,17 @@ export default function Leads() {
                     {l.email && (
                       <button
                         onClick={() => {
-                          const subject = encodeURIComponent('Legacy Moving — Seu pedido de orçamento');
+                          const subject = encodeURIComponent(`Legacy Moving — Seu pedido de orçamento`);
                           const body = encodeURIComponent([
                             `Prezado(a) ${l.nome},`,
-                            '',
-                            'Obrigado pelo seu contato com a Legacy Moving!',
-                            '',
+                            ``,
+                            `Obrigado pelo seu contato com a Legacy Moving!`,
+                            ``,
                             `Recebemos sua solicitação de orçamento para serviço de ${l.tipo_servico || 'mudança'} e em breve um de nossos consultores entrará em contato para apresentar a melhor proposta.`,
-                            '',
-                            'Atenciosamente,',
-                            'Legacy Moving',
-                            'legacymovingbr@gmail.com',
+                            ``,
+                            `Atenciosamente,`,
+                            `Legacy Moving`,
+                            `legacymovingbr@gmail.com`,
                           ].join('\n'));
                           window.open(`mailto:${l.email}?subject=${subject}&body=${body}`, '_blank');
                         }}
