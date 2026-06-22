@@ -209,34 +209,44 @@ const Dashboard = () => {
             {/* Grid de dias */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
               {cells.map((dia, idx) => {
-                if (!dia) return <div key={`e-${idx}`} style={{ minHeight: '110px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6', background: '#fafafa' }} />;
+                if (!dia) return <div key={`e-${idx}`} style={{ minHeight: '130px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6', background: '#fafafa' }} />;
                 const isHoje = hoje.getDate() === dia && hoje.getMonth() === mes && hoje.getFullYear() === ano;
                 const osNoDia = osPorDia[dia] || [];
+                const progNoDia = progPorDia[dia] || [];
+                const totalEventos = osNoDia.length + progNoDia.length;
                 const isWeekend = ((primeiroDia + dia - 1) % 7 === 0) || ((primeiroDia + dia - 1) % 7 === 6);
                 return (
                   <div key={dia} style={{
-                    minHeight: '140px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6',
+                    minHeight: '160px', borderRight: '0.5px solid #f3f4f6', borderBottom: '0.5px solid #f3f4f6',
                     padding: '8px 6px', background: isWeekend ? '#fafafa' : 'white',
                     position: 'relative',
+                    borderTop: isHoje ? '2px solid #0f1f3d' : 'none',
                   }}>
-                    {/* Número do dia */}
-                    <div style={{
-                      width: '26px', height: '26px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '13px', fontWeight: isHoje ? '700' : '400',
-                      background: isHoje ? '#0f1f3d' : 'transparent',
-                      color: isHoje ? 'white' : isWeekend ? '#9ca3af' : '#374151',
-                      marginBottom: '4px',
-                    }}>
-                      {dia}
+                    {/* Número do dia + badge se tem OS */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
+                      <div style={{
+                        width: '26px', height: '26px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '13px', fontWeight: isHoje ? '700' : '500',
+                        background: isHoje ? '#0f1f3d' : 'transparent',
+                        color: isHoje ? 'white' : isWeekend ? '#9ca3af' : '#374151',
+                        flexShrink: 0,
+                      }}>
+                        {dia}
+                      </div>
+                      {totalEventos > 0 && (
+                        <span style={{ fontSize: '10px', background: '#f0f4ff', color: '#2563eb', borderRadius: '10px', padding: '1px 6px', fontWeight: '600' }}>
+                          {totalEventos}
+                        </span>
+                      )}
                     </div>
                     {/* Programação do dia */}
-                    {(progPorDia[dia] || []).slice(0, 2).map((p, pi) => (
+                    {progNoDia.slice(0, 2).map((p, pi) => (
                       <div key={`p-${pi}`} onClick={() => navigate('/programacao')} style={{
-                        padding: '2px 6px', borderRadius: '4px', marginBottom: '2px', cursor: 'pointer',
+                        padding: '3px 6px', borderRadius: '4px', marginBottom: '3px', cursor: 'pointer',
                         background: '#f5f3ff',
                         borderLeft: '2px solid #7c3aed',
                         fontSize: '10.5px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        lineHeight: '1.4',
+                        lineHeight: '1.5',
                       }} title={p.titulo || p.cliente || 'Programação'}>
                         <span style={{ fontWeight: '600', color: '#7c3aed' }}>◆</span>{' '}{p.titulo || p.cliente || 'Prog.'}
                       </div>
@@ -244,17 +254,25 @@ const Dashboard = () => {
                     {/* OS do dia */}
                     {osNoDia.slice(0, 3).map(o => (
                       <div key={o.id} onClick={() => navigate('/ordens-servico')} style={{
-                        padding: '2px 6px', borderRadius: '4px', marginBottom: '2px', cursor: 'pointer',
-                        background: (STATUS_COLOR[o.status] || '#9ca3af') + '20',
+                        padding: '3px 6px', borderRadius: '4px', marginBottom: '3px', cursor: 'pointer',
+                        background: (STATUS_COLOR[o.status] || '#9ca3af') + '18',
                         borderLeft: `2px solid ${STATUS_COLOR[o.status] || '#9ca3af'}`,
-                        fontSize: '10.5px', color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        lineHeight: '1.4',
-                      }} title={`${o.numero} — ${o.cliente}`}>
-                        <span style={{ fontWeight: '600', color: STATUS_COLOR[o.status] || '#9ca3af' }}>●</span>{' '}{o.cliente}
+                        fontSize: '10.5px', color: '#1a1a1a', lineHeight: '1.5',
+                      }} title={`${o.numero} — ${o.cliente}${o.equipe ? ' · ' + o.equipe : ''}`}>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '600' }}>
+                          {o.cliente || o.numero}
+                        </div>
+                        {(o.equipe || o.caminhao) && (
+                          <div style={{ fontSize: '9.5px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {[o.equipe, o.caminhao].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </div>
                     ))}
-                    {(osNoDia.length + (progPorDia[dia] || []).length) > 5 && (
-                      <div style={{ fontSize: '10px', color: '#9ca3af', paddingLeft: '4px' }}>+{osNoDia.length + (progPorDia[dia]||[]).length - 5} mais</div>
+                    {totalEventos > 5 && (
+                      <div style={{ fontSize: '10px', color: '#6b7280', paddingLeft: '4px', fontStyle: 'italic' }}>
+                        +{totalEventos - 5} mais
+                      </div>
                     )}
                   </div>
                 );

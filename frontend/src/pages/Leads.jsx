@@ -23,6 +23,8 @@ const STATUS_COLORS = {
   classificado:{ bg: '#ede9fe', color: '#6d28d9' },
   convertido:  { bg: '#dcfce7', color: '#15803d' },
   perdido:     { bg: '#fee2e2', color: '#b91c1c' },
+  cancelado:   { bg: '#fff7ed', color: '#c2410c' },
+  arquivado:   { bg: '#f3f4f6', color: '#6b7280' },
 };
 
 const badge = (status) => {
@@ -150,6 +152,12 @@ export default function Leads() {
     } catch (e) { alert(e.message); }
   };
 
+  const cancelarLead = async (lead) => {
+    if (!window.confirm(`Cancelar lead "${lead.nome}"? O motivo poderá ser registrado nas observações.`)) return;
+    try { await api.updateLead(lead.id, { status: 'cancelado' }); carregar(); }
+    catch (e) { alert(e.message); }
+  };
+
   const arquivarLead = async (lead) => {
     if (!window.confirm(`Arquivar lead "${lead.nome}"? Ele ficará oculto da lista principal.`)) return;
     try { await api.updateLead(lead.id, { status: 'arquivado' }); carregar(); }
@@ -216,6 +224,8 @@ export default function Leads() {
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Leads</h1>
           <p style={{ color: '#6b7280', fontSize: 13, margin: '4px 0 0' }}>
             {leads.length} leads · {leads.filter(l => l.status === 'convertido').length} convertidos ·{' '}
+            {leads.filter(l => l.status === 'perdido').length > 0 && `${leads.filter(l => l.status === 'perdido').length} perdidos · `}
+            {leads.filter(l => l.status === 'cancelado').length > 0 && `${leads.filter(l => l.status === 'cancelado').length} cancelados · `}
             taxa {leads.length > 0 ? ((leads.filter(l => l.status === 'convertido').length / leads.length) * 100).toFixed(0) : 0}%
           </p>
         </div>
@@ -250,8 +260,10 @@ export default function Leads() {
         const total = leads.length;
         const convertidos = leads.filter(l => l.status === 'convertido').length;
         const perdidos = leads.filter(l => l.status === 'perdido').length;
+        const cancelados = leads.filter(l => l.status === 'cancelado').length;
         const novos = leads.filter(l => l.status === 'novo').length;
         const classificados = leads.filter(l => l.status === 'classificado').length;
+        const ativos = novos + classificados;
         const taxa = total > 0 ? ((convertidos / total) * 100).toFixed(1) : 0;
 
         // Por origem
@@ -266,6 +278,7 @@ export default function Leads() {
           { name: 'Classificado', value: classificados, color: '#7c3aed' },
           { name: 'Convertido', value: convertidos, color: '#16a34a' },
           { name: 'Perdido', value: perdidos, color: '#dc2626' },
+          { name: 'Cancelado', value: cancelados, color: '#ea580c' },
         ].filter(d => d.value > 0);
 
         const PIE_COLORS_ORIGEM = ['#2563eb', '#ec4899', '#25d366', '#7c3aed', '#f59e0b', '#06b6d4', '#ec4899'];
@@ -273,12 +286,13 @@ export default function Leads() {
         return (
           <div style={{ marginBottom: 24 }}>
             {/* KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 16 }}>
               {[
                 { label: 'Total', value: total, color: '#6b7280', bg: '#f3f4f6' },
-                { label: 'Novos', value: novos, color: '#1d4ed8', bg: '#dbeafe' },
-                { label: 'Classificados', value: classificados, color: '#6d28d9', bg: '#ede9fe' },
+                { label: 'Em aberto', value: ativos, color: '#1d4ed8', bg: '#dbeafe' },
                 { label: 'Convertidos', value: convertidos, color: '#15803d', bg: '#dcfce7' },
+                { label: 'Perdidos', value: perdidos, color: '#b91c1c', bg: '#fee2e2' },
+                { label: 'Cancelados', value: cancelados, color: '#c2410c', bg: '#fff7ed' },
                 { label: 'Taxa Conv.', value: `${taxa}%`, color: '#15803d', bg: '#f0fdf4' },
               ].map((k, i) => (
                 <div key={i} style={{ background: 'white', borderRadius: 10, padding: '14px 16px', border: '0.5px solid #e5e7eb', borderLeft: `4px solid ${k.color}` }}>
@@ -549,7 +563,13 @@ export default function Leads() {
                         Perdido
                       </button>
                     )}
-                    {(l.status === 'perdido' || l.status === 'novo') && (
+                    {(l.status === 'novo' || l.status === 'classificado') && (
+                      <button onClick={() => cancelarLead(l)}
+                        style={{ padding: '4px 9px', background: '#fff7ed', color: '#c2410c', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
+                        Cancelar
+                      </button>
+                    )}
+                    {(l.status === 'perdido' || l.status === 'cancelado' || l.status === 'novo') && (
                       <button onClick={() => arquivarLead(l)} title="Arquivar lead"
                         style={{ padding: '4px 9px', background: '#f3f4f6', color: '#6b7280', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>
                         Arquivar

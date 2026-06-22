@@ -268,6 +268,50 @@ const Financeiro = () => {
               </div>
             </div>
 
+            {/* Comparativo Mensal */}
+            {historico.length >= 2 && (() => {
+              const prev = historico[historico.length - 2] || {};
+              const curr = { receita: r.receita_total || 0, despesas: r.total_despesas || 0, lucro: r.lucro_liquido || 0, mudancas: r.mudancas_realizadas || 0 };
+              const delta = (a, b) => b > 0 ? ((a - b) / b * 100).toFixed(1) : null;
+              const dR = delta(curr.receita, prev.receita || 0);
+              const dL = delta(curr.lucro, prev.lucro || 0);
+              const dM = delta(curr.mudancas, prev.mudancas || 0);
+              const Cmp = ({ label, val, d }) => {
+                const pos = parseFloat(d) >= 0;
+                return (
+                  <div style={{ padding: '14px 20px', borderRight: '1px solid #f3f4f6' }}>
+                    <p style={{ margin: '0 0 3px', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>{label}</p>
+                    <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1a1a1a' }}>{val}</p>
+                    {d !== null && (
+                      <p style={{ margin: '3px 0 0', fontSize: 11, fontWeight: 600, color: pos ? '#16a34a' : '#dc2626' }}>
+                        {pos ? '▲' : '▼'} {Math.abs(parseFloat(d))}% vs mês anterior
+                      </p>
+                    )}
+                  </div>
+                );
+              };
+              return (
+                <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  <div style={{ padding: '12px 20px', background: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
+                    <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#374151' }}>📊 Comparativo — {MESES[mes-1]}/{ano} vs mês anterior ({prev.label || '—'})</h3>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                    <Cmp label="Receita" val={fmt(curr.receita)} d={dR} />
+                    <Cmp label="Lucro Líquido" val={fmt(curr.lucro)} d={dL} />
+                    <div style={{ padding: '14px 20px' }}>
+                      <p style={{ margin: '0 0 3px', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>Mudanças</p>
+                      <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1a1a1a' }}>{curr.mudancas}</p>
+                      {dM !== null && (
+                        <p style={{ margin: '3px 0 0', fontSize: 11, fontWeight: 600, color: parseFloat(dM) >= 0 ? '#16a34a' : '#dc2626' }}>
+                          {parseFloat(dM) >= 0 ? '▲' : '▼'} {Math.abs(parseFloat(dM))}% vs mês anterior
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Recorrentes do Mês */}
             {recAtivos.length > 0 && (
               <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
