@@ -975,10 +975,12 @@ const Configuracoes = () => {
 
   const salvarUsuario = async () => {
     const nome = formRef.current.nome?.value?.trim();
-    const email = formRef.current.email?.value?.trim();
+    const cpfRaw = (formRef.current.cpf?.value || '').replace(/\D/g, '').trim();
+    const email = formRef.current.email?.value?.trim() || '';
     const cargo = formRef.current.cargo?.value;
     const senha = formRef.current.senha?.value;
-    if (!nome || !email) { alert('Nome e email são obrigatórios.'); return; }
+    if (!nome) { alert('Nome é obrigatório.'); return; }
+    if (!usuarioEditando && cpfRaw.length !== 11) { alert('CPF inválido. Informe os 11 dígitos.'); return; }
     setSalvendoUsuario(true);
     try {
       if (usuarioEditando) {
@@ -987,9 +989,7 @@ const Configuracoes = () => {
         await api.updateUsuario(usuarioEditando.id, payload);
       } else {
         if (!senha) { alert('Senha é obrigatória para novos usuários.'); setSalvendoUsuario(false); return; }
-        // CPF gerado automaticamente a partir do email (único por default)
-        const cpf = email.split('@')[0].replace(/\W/g, '').substring(0, 11).padEnd(11, '0');
-        await api.createUsuario({ name: nome, email, role: cargo, password: senha, cpf });
+        await api.createUsuario({ name: nome, email, role: cargo, password: senha, cpf: cpfRaw });
       }
       // Recarrega lista
       const data = await api.getUsuarios();
@@ -1493,7 +1493,28 @@ const Configuracoes = () => {
                 <input ref={el => formRef.current.nome = el} style={input} type="text" defaultValue={usuarioEditando?.nome || ''} placeholder="Nome completo" />
               </div>
               <div>
-                <span style={label}>Email *</span>
+                <span style={label}>CPF * (usado para login)</span>
+                <input
+                  ref={el => formRef.current.cpf = el}
+                  style={input}
+                  type="text"
+                  defaultValue=""
+                  placeholder="000.000.000-00"
+                  maxLength={14}
+                  disabled={!!usuarioEditando}
+                  onChange={e => {
+                    const n = e.target.value.replace(/\D/g,'').slice(0,11);
+                    let f = n;
+                    if (n.length > 3) f = n.slice(0,3)+'.'+n.slice(3);
+                    if (n.length > 6) f = n.slice(0,3)+'.'+n.slice(3,6)+'.'+n.slice(6);
+                    if (n.length > 9) f = n.slice(0,3)+'.'+n.slice(3,6)+'.'+n.slice(6,9)+'-'+n.slice(9);
+                    e.target.value = f;
+                  }}
+                />
+                {usuarioEditando && <span style={{ fontSize: '11px', color: '#9ca3af' }}>CPF não pode ser alterado</span>}
+              </div>
+              <div>
+                <span style={label}>Email (opcional)</span>
                 <input ref={el => formRef.current.email = el} style={input} type="email" defaultValue={usuarioEditando?.email || ''} placeholder="email@legacy.com.br" />
               </div>
               <div>
@@ -1505,7 +1526,7 @@ const Configuracoes = () => {
                   <option value="operacional">Operacional</option>
                 </select>
               </div>
-              <div>
+              <div style={{ gridColumn: '1 / -1' }}>
                 <span style={label}>Senha {usuarioEditando ? '(deixe em branco para manter)' : '*'}</span>
                 <input ref={el => formRef.current.senha = el} style={input} type="password" placeholder={usuarioEditando ? 'Deixe em branco para manter' : 'Senha obrigatória'} />
               </div>

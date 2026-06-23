@@ -62,6 +62,8 @@ export default function Leads() {
   const [erro, setErro] = useState(null);
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState('');
+  const [pagina, setPagina] = useState(0);
+  const PER_PAGE = 25;
   const [modal, setModal] = useState(null);
   const [selecionado, setSelecionado] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -210,7 +212,9 @@ export default function Leads() {
     } catch (e) { alert(e.message); }
   };
 
-  const filtrados = leads.filter(l => !busca || l.nome.toLowerCase().includes(busca.toLowerCase()));
+  const filtrados = leads.filter(l => !busca || l.nome.toLowerCase().includes(busca.toLowerCase()) || (l.telefone || '').includes(busca));
+  const totalPaginas = Math.ceil(filtrados.length / PER_PAGE);
+  const paginados = filtrados.slice(pagina * PER_PAGE, (pagina + 1) * PER_PAGE);
 
   const inp = {
     width: '100%', padding: '8px 12px', border: '1px solid #e5e7eb',
@@ -480,7 +484,7 @@ export default function Leads() {
       {/* ── LISTA VIEW ───────────────────────────────────────────── */}
       {viewMode === 'lista' && <>
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <input placeholder="Buscar por nome..." value={busca} onChange={e => setBusca(e.target.value)}
+        <input placeholder="Buscar por nome ou telefone..." value={busca} onChange={e => { setBusca(e.target.value); setPagina(0); }}
           style={{ flex: 1, minWidth: 200, padding: '8px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, outline: 'none' }} />
         <select value={filtro} onChange={e => setFiltro(e.target.value)}
           style={{ padding: '8px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, outline: 'none' }}>
@@ -506,7 +510,7 @@ export default function Leads() {
             </tr>
           </thead>
           <tbody>
-            {filtrados.map(l => (
+            {paginados.map(l => (
               <tr key={l.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -619,6 +623,36 @@ export default function Leads() {
             )}
           </tbody>
         </table>
+
+        {/* Paginação */}
+        {totalPaginas > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid #f3f4f6', background: '#fafafa' }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              Mostrando {pagina * PER_PAGE + 1}–{Math.min((pagina + 1) * PER_PAGE, filtrados.length)} de {filtrados.length} leads
+            </span>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <button
+                onClick={() => setPagina(p => Math.max(0, p - 1))}
+                disabled={pagina === 0}
+                style={{ padding: '5px 12px', background: pagina === 0 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: pagina === 0 ? 'default' : 'pointer', color: pagina === 0 ? '#d1d5db' : '#374151' }}>
+                ← Anterior
+              </button>
+              {Array.from({ length: totalPaginas }, (_, i) => i).filter(i => Math.abs(i - pagina) <= 2).map(i => (
+                <button key={i}
+                  onClick={() => setPagina(i)}
+                  style={{ padding: '5px 10px', background: i === pagina ? '#0D1B2A' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: i === pagina ? '#fff' : '#374151', fontWeight: i === pagina ? 600 : 400 }}>
+                  {i + 1}
+                </button>
+              ))}
+              <button
+                onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))}
+                disabled={pagina >= totalPaginas - 1}
+                style={{ padding: '5px 12px', background: pagina >= totalPaginas - 1 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: pagina >= totalPaginas - 1 ? 'default' : 'pointer', color: pagina >= totalPaginas - 1 ? '#d1d5db' : '#374151' }}>
+                Próximo →
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       </>}

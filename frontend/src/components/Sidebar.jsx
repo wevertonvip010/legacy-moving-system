@@ -88,22 +88,53 @@ const Sidebar = () => {
 
   return (
     <div style={{
-      background: '#0f1f3d', color: 'white', width: '220px',
+      background: '#0D1B2A', color: 'white', width: '220px',
       height: '100vh', position: 'sticky', top: 0,
       display: 'flex', flexDirection: 'column', flexShrink: 0,
       overflow: 'hidden',
     }}>
-      {/* Logo */}
-      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* Logo Legacy Moving */}
+      <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid rgba(200,165,90,0.2)' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: '800', letterSpacing: '0.5px', color: '#ffffff' }}>
-            LEGACY
+          {/* Fleur-de-lis */}
+          <svg width="28" height="32" viewBox="0 0 100 115" fill="#F7F5F0" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', margin: '0 auto 6px' }}>
+            <path d="M50 4 C45 14 34 27 32 43 C30 55 37 64 50 64 C63 64 70 55 68 43 C66 27 55 14 50 4Z"/>
+            <path d="M33 50 C27 43 15 44 10 53 C6 61 11 70 21 71 C28 72 35 66 33 59 C31 65 25 68 19 66 C14 64 13 59 16 56 C20 52 28 54 31 60Z"/>
+            <path d="M67 50 C73 43 85 44 90 53 C94 61 89 70 79 71 C72 72 65 66 67 59 C69 65 75 68 81 66 C86 64 87 59 84 56 C80 52 72 54 69 60Z"/>
+            <path d="M35 64 L65 64 L65 73 L35 73Z"/>
+            <path d="M42 73 L42 84 L34 96 L34 105 L66 105 L66 96 L58 84 L58 73Z"/>
+          </svg>
+          {/* Texto */}
+          <div style={{
+            fontFamily: 'Georgia, "Times New Roman", serif',
+            fontSize: '17px',
+            fontWeight: '700',
+            color: '#F7F5F0',
+            letterSpacing: '0px',
+            lineHeight: 1,
+          }}>
+            Legacy
           </div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', letterSpacing: '3px', marginTop: '1px' }}>
-            MOVING
+          <div style={{
+            fontSize: '8px',
+            fontWeight: '600',
+            color: 'rgba(247,245,240,0.45)',
+            letterSpacing: '4px',
+            marginTop: '2px',
+            textTransform: 'uppercase',
+          }}>
+            Moving
           </div>
-          <div style={{ marginTop: '8px', padding: '3px 10px', background: 'rgba(59,130,246,0.2)', borderRadius: '20px', display: 'inline-block' }}>
-            <span style={{ fontSize: '10px', color: '#93c5fd', fontWeight: '600' }}>ERP v2.0</span>
+          {/* Linha gold */}
+          <div style={{
+            width: '36px',
+            height: '1px',
+            background: '#C8A55A',
+            margin: '6px auto 8px',
+            borderRadius: '1px',
+          }} />
+          <div style={{ padding: '2px 8px', background: 'rgba(200,165,90,0.15)', borderRadius: '20px', display: 'inline-block', border: '1px solid rgba(200,165,90,0.25)' }}>
+            <span style={{ fontSize: '9px', color: '#C8A55A', fontWeight: '600', letterSpacing: '0.5px' }}>ERP v2.0</span>
           </div>
         </div>
       </div>

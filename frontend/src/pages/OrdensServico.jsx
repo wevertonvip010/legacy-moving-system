@@ -57,6 +57,8 @@ const OrdensServico = () => {
   const [error, setError] = useState(null);
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState('todos');
+  const [paginaOS, setPaginaOS] = useState(0);
+  const PER_PAGE_OS = 20;
   const [showModal, setShowModal] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(EMPTY);
@@ -250,6 +252,8 @@ const OrdensServico = () => {
     const match = !busca || o.cliente.toLowerCase().includes(busca.toLowerCase()) || o.numero.toLowerCase().includes(busca.toLowerCase());
     return ok && match;
   });
+  const totalPaginasOS = Math.ceil(filtrados.length / PER_PAGE_OS);
+  const paginadosOS = filtrados.slice(paginaOS * PER_PAGE_OS, (paginaOS + 1) * PER_PAGE_OS);
 
   if (loading) return <Spinner />;
   if (error) return <Erro msg={error} onRetry={carregar} />;
@@ -296,7 +300,7 @@ const OrdensServico = () => {
           <tbody>
             {filtrados.length === 0 ? (
               <tr><td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Nenhuma OS encontrada</td></tr>
-            ) : filtrados.map(o => (
+            ) : paginadosOS.map(o => (
               <tr key={o.id} style={{ borderTop: '0.5px solid #f3f4f6' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -366,6 +370,31 @@ const OrdensServico = () => {
             ))}
           </tbody>
         </table>
+
+        {/* Paginação OS */}
+        {totalPaginasOS > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid #f3f4f6', background: '#fafafa' }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              Mostrando {paginaOS * PER_PAGE_OS + 1}–{Math.min((paginaOS + 1) * PER_PAGE_OS, filtrados.length)} de {filtrados.length} ordens
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={() => setPaginaOS(p => Math.max(0, p - 1))} disabled={paginaOS === 0}
+                style={{ padding: '5px 12px', background: paginaOS === 0 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: paginaOS === 0 ? 'default' : 'pointer', color: paginaOS === 0 ? '#d1d5db' : '#374151' }}>
+                ← Anterior
+              </button>
+              {Array.from({ length: totalPaginasOS }, (_, i) => i).filter(i => Math.abs(i - paginaOS) <= 2).map(i => (
+                <button key={i} onClick={() => setPaginaOS(i)}
+                  style={{ padding: '5px 10px', background: i === paginaOS ? '#0D1B2A' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: i === paginaOS ? '#fff' : '#374151', fontWeight: i === paginaOS ? 600 : 400 }}>
+                  {i + 1}
+                </button>
+              ))}
+              <button onClick={() => setPaginaOS(p => Math.min(totalPaginasOS - 1, p + 1))} disabled={paginaOS >= totalPaginasOS - 1}
+                style={{ padding: '5px 12px', background: paginaOS >= totalPaginasOS - 1 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: paginaOS >= totalPaginasOS - 1 ? 'default' : 'pointer', color: paginaOS >= totalPaginasOS - 1 ? '#d1d5db' : '#374151' }}>
+                Próximo →
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {showModal && (

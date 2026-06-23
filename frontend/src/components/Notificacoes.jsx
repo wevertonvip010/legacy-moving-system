@@ -62,16 +62,19 @@ const Notificacoes = () => {
   const gerarNotificacoes = useCallback(async () => {
     setLoading(true);
     try {
-      const [dash, avRes, estoque] = await Promise.allSettled([
+      const [dash, avRes, estoque, leadsRes, osRes] = await Promise.allSettled([
         api.dashboard(),
         api.getResumoAvarias(),
         api.getEstoque(),
+        api.getLeads(),
+        api.getOrdens(),
       ]);
 
       const items = [];
       const now = new Date().toISOString();
+      const hoje = new Date();
 
-      // Dashboard data
+      // ── Dashboard KPIs ─────────────────────────────────
       if (dash.status === 'fulfilled') {
         const d = dash.value;
         if (d.leads_novos > 0) {
@@ -82,7 +85,7 @@ const Notificacoes = () => {
         }
       }
 
-      // Avarias
+      // ── Avarias abertas ─────────────────────────────────
       if (avRes.status === 'fulfilled') {
         const av = avRes.value;
         if ((av.abertas || 0) > 0) {
@@ -90,7 +93,7 @@ const Notificacoes = () => {
         }
       }
 
-      // Estoque
+      // ── Estoque crítico ─────────────────────────────────
       if (estoque.status === 'fulfilled') {
         const est = estoque.value;
         const criticos = est.alertas_criticos?.length || 0;
@@ -100,6 +103,34 @@ const Notificacoes = () => {
         }
         if (baixos > 0) {
           items.push({ tipo: 'estoque', msg: `${baixos} item${baixos > 1 ? 'ns' : ''} abaixo do estoque mínimo`, ts: now, prioridade: 2, link: '/estoque' });
+        }
+      }
+
+      // ── Leads parados há +7 dias ────────────────────────
+      if (leadsRes.status === 'fulfilled') {
+        const leads = Array.isArray(leadsRes.value) ? leadsRes.value : (leadsRes.value?.items || []);
+        const parados = leads.filter(l => {
+          if (!['novo', 'classificado'].includes(l.status)) return false;
+          if (!l.created_at && !l.data_criacao) return false;
+          const criado = new Date(l.created_at || l.data_criacao);
+          return (hoje - criado) / 86400000 >= 7;
+        });
+        if (parados.length > 0) {
+          items.push({ tipo: 'lead', msg: `${parados.length} lead${parados.length > 1 ? 's' : ''} parado${parados.length > 1 ? 's' : ''} há mais de 7 dias`, ts: now, prioridade: 3, link: '/leads' });
+        }
+      }
+
+      // ── OS nos próximos 2 dias ───────────────────────────
+      if (osRes.status === 'fulfilled') {
+        const ordens = Array.isArray(osRes.value) ? osRes.value : (osRes.value?.items || []);
+        const amanha = new Date(hoje); amanha.setDate(amanha.getDate() + 2);
+        const proximas = ordens.filter(o => {
+          if (!o.data_mudanca) return false;
+          const d = new Date(o.data_mudanca);
+          return d >= hoje && d <= amanha && o.status === 'em_andamento';
+        });
+        if (proximas.length > 0) {
+          items.push({ tipo: 'os', msg: `${proximas.length} OS em andamento nos próximos 2 dias`, ts: now, prioridade: 2, link: '/ordens-servico' });
         }
       }
 
@@ -145,7 +176,7 @@ const Notificacoes = () => {
             background: '#ef4444', color: 'white',
             fontSize: '9px', fontWeight: '800',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: '2px solid #0f1f3d',
+            border: '2px solid #0D1B2A',
             animation: 'notifPulse 2s ease-in-out infinite',
           }}>
             {unread > 9 ? '9+' : unread}
@@ -172,7 +203,7 @@ const Notificacoes = () => {
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Bell size={15} color="#0f1f3d" />
+              <Bell size={15} color="#0D1B2A" />
               <span style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a1a' }}>Notificações</span>
               {unread > 0 && (
                 <span style={{ fontSize: '11px', background: '#ef4444', color: 'white', padding: '1px 7px', borderRadius: '20px', fontWeight: '700' }}>

@@ -20,6 +20,8 @@ const Clientes = () => {
   const [error, setError] = useState(null);
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('todos');
+  const [pagina, setPagina] = useState(0);
+  const PER_PAGE_CLI = 25;
   const [showModal, setShowModal] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(EMPTY);
@@ -109,6 +111,8 @@ const Clientes = () => {
       (c.email && c.email.toLowerCase().includes(busca.toLowerCase()));
     return ok && match;
   });
+  const totalPaginasCli = Math.ceil(filtrados.length / PER_PAGE_CLI);
+  const paginadosCli = filtrados.slice(pagina * PER_PAGE_CLI, (pagina + 1) * PER_PAGE_CLI);
 
   if (loading) return <Spinner />;
   if (error) return <Erro msg={error} onRetry={carregar} />;
@@ -155,7 +159,7 @@ const Clientes = () => {
           <tbody>
             {filtrados.length === 0 ? (
               <tr><td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Nenhum cliente encontrado</td></tr>
-            ) : filtrados.map(c => (
+            ) : paginadosCli.map(c => (
               <tr key={c.id} style={{ borderTop: '0.5px solid #f3f4f6' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -200,6 +204,31 @@ const Clientes = () => {
             ))}
           </tbody>
         </table>
+
+        {/* Paginação Clientes */}
+        {totalPaginasCli > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid #f3f4f6', background: '#fafafa' }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              Mostrando {pagina * PER_PAGE_CLI + 1}–{Math.min((pagina + 1) * PER_PAGE_CLI, filtrados.length)} de {filtrados.length} clientes
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                style={{ padding: '5px 12px', background: pagina === 0 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: pagina === 0 ? 'default' : 'pointer', color: pagina === 0 ? '#d1d5db' : '#374151' }}>
+                ← Anterior
+              </button>
+              {Array.from({ length: totalPaginasCli }, (_, i) => i).filter(i => Math.abs(i - pagina) <= 2).map(i => (
+                <button key={i} onClick={() => setPagina(i)}
+                  style={{ padding: '5px 10px', background: i === pagina ? '#0D1B2A' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: i === pagina ? '#fff' : '#374151', fontWeight: i === pagina ? 600 : 400 }}>
+                  {i + 1}
+                </button>
+              ))}
+              <button onClick={() => setPagina(p => Math.min(totalPaginasCli - 1, p + 1))} disabled={pagina >= totalPaginasCli - 1}
+                style={{ padding: '5px 12px', background: pagina >= totalPaginasCli - 1 ? '#f3f4f6' : '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, cursor: pagina >= totalPaginasCli - 1 ? 'default' : 'pointer', color: pagina >= totalPaginasCli - 1 ? '#d1d5db' : '#374151' }}>
+                Próximo →
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal Novo/Editar */}
