@@ -108,24 +108,42 @@ const Avarias = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selecionarOS = (osId) => {
+  const selecionarOS = async (osId) => {
     if (!osId) {
       setForm(f => ({ ...f, os_id: '', os_numero: '', cliente: '', cliente_id: '', equipe: '', veiculo: '', organizer_id: '' }));
       return;
     }
-    const os = osList.find(o => String(o.id) === String(osId));
-    if (!os) return;
-    // Auto-popula todos os campos da OS — usuário só preenche tipo, descrição e valor
-    setForm(f => ({
-      ...f,
-      os_id: osId,
-      os_numero: os.numero || '',
-      cliente: os.cliente || '',
-      cliente_id: os.cliente_id || '',
-      equipe: os.equipe || '',
-      veiculo: os.veiculo || '',
-      organizer_id: os.organizer_id || f.organizer_id || '',
-    }));
+    // Preenche imediatamente com dados da lista (sem aguardar)
+    const osRapida = osList.find(o => String(o.id) === String(osId));
+    if (osRapida) {
+      setForm(f => ({
+        ...f,
+        os_id: osId,
+        os_numero: osRapida.numero || '',
+        cliente: osRapida.cliente || '',
+        cliente_id: osRapida.cliente_id || '',
+        equipe: osRapida.equipe || '⏳ Carregando equipe...',
+        veiculo: osRapida.veiculo || '',
+        organizer_id: osRapida.organizer_id || f.organizer_id || '',
+      }));
+    }
+    // Depois busca a versão completa com equipe enriquecida (FuncionarioOS + etapas)
+    try {
+      const osFull = await api.getOSById(osId);
+      setForm(f => ({
+        ...f,
+        os_id: osId,
+        os_numero: osFull.numero || '',
+        cliente: osFull.cliente || '',
+        cliente_id: osFull.cliente_id || '',
+        equipe: osFull.equipe || '',
+        veiculo: osFull.veiculo || '',
+        organizer_id: osFull.organizer_id || f.organizer_id || '',
+      }));
+    } catch (_) {
+      // Se falhar, mantém os dados rápidos sem o "Carregando..."
+      setForm(f => ({ ...f, equipe: osRapida?.equipe || '' }));
+    }
   };
 
   const abrirNova = () => {
@@ -465,12 +483,35 @@ const Avarias = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
                 <div>
-                  <label style={labelStyle}>Equipe</label>
-                  <input value={form.equipe} onChange={e => setForm(f => ({ ...f, equipe: e.target.value }))} style={inputStyle} placeholder="Nomes da equipe" />
+                  <label style={labelStyle}>
+                    Equipe
+                    {form.equipe === '⏳ Carregando equipe...' && (
+                      <span style={{ marginLeft: '6px', fontSize: '11px', color: '#f59e0b', fontWeight: '400' }}>carregando...</span>
+                    )}
+                  </label>
+                  <input
+                    value={form.equipe === '⏳ Carregando equipe...' ? '' : form.equipe}
+                    onChange={e => setForm(f => ({ ...f, equipe: e.target.value }))}
+                    style={{
+                      ...inputStyle,
+                      background: form.equipe && form.equipe !== '⏳ Carregando equipe...' && form.os_id ? '#f0fdf4' : 'white',
+                      borderColor: form.equipe && form.equipe !== '⏳ Carregando equipe...' && form.os_id ? '#86efac' : '#e5e7eb',
+                    }}
+                    placeholder={form.equipe === '⏳ Carregando equipe...' ? '⏳ Buscando equipe da OS...' : 'Nomes da equipe'}
+                  />
                 </div>
                 <div>
                   <label style={labelStyle}>Veículo</label>
-                  <input value={form.veiculo} onChange={e => setForm(f => ({ ...f, veiculo: e.target.value }))} style={inputStyle} placeholder="Caminhão / placa" />
+                  <input
+                    value={form.veiculo}
+                    onChange={e => setForm(f => ({ ...f, veiculo: e.target.value }))}
+                    style={{
+                      ...inputStyle,
+                      background: form.veiculo && form.os_id ? '#f0fdf4' : 'white',
+                      borderColor: form.veiculo && form.os_id ? '#86efac' : '#e5e7eb',
+                    }}
+                    placeholder="Caminhão / placa"
+                  />
                 </div>
               </div>
 

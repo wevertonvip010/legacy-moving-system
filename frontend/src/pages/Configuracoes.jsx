@@ -958,10 +958,15 @@ const Configuracoes = () => {
     api.getUsuarios()
       .then(data => {
         const lista = Array.isArray(data) ? data : (data?.items || []);
+        const parsePerms = (p) => {
+          if (Array.isArray(p)) return p;
+          if (typeof p === 'string') { try { return JSON.parse(p); } catch { return []; } }
+          return [];
+        };
         if (lista.length > 0) setUsuarios(lista.map(u => ({
           id: u.id, nome: u.nome || u.name, email: u.email || '',
           cargo: u.role || u.cargo || 'Operacional',
-          permissoes: u.permissoes || [],
+          permissoes: parsePerms(u.permissoes),
           status: u.ativo === false ? 'inativo' : 'ativo',
           ultimoAcesso: u.ultimo_acesso || '—',
         })));
@@ -994,10 +999,15 @@ const Configuracoes = () => {
       // Recarrega lista
       const data = await api.getUsuarios();
       const lista = Array.isArray(data) ? data : (data?.items || []);
+      const parsePerms = (p) => {
+        if (Array.isArray(p)) return p;
+        if (typeof p === 'string') { try { return JSON.parse(p); } catch { return []; } }
+        return [];
+      };
       setUsuarios(lista.map(u => ({
         id: u.id, nome: u.nome || u.name, email: u.email || '',
         cargo: u.role || u.cargo || 'Operacional',
-        permissoes: u.permissoes || [],
+        permissoes: parsePerms(u.permissoes),
         status: u.ativo === false ? 'inativo' : 'ativo',
         ultimoAcesso: u.ultimo_acesso || '—',
       })));

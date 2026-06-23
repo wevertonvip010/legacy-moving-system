@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt, Camera } from 'lucide-react';
+import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt, Camera, Package, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
 import { getUserAvatarStyle, getUserInitials } from '../lib/userColors';
 import VistoriaDigital from '../components/VistoriaDigital';
@@ -87,6 +87,13 @@ const OrdensServico = () => {
   const [showAvariaPrompt, setShowAvariaPrompt] = useState(false);
   const [osConcluidaInfo, setOsConcluidaInfo] = useState(null);
 
+  // Material picker (OS ↔ Estoque)
+  const [estoqueList, setEstoqueList] = useState([]);
+  const [materiaisOS, setMateriaisOS] = useState([]); // [{estoque_id, nome, unidade, quantidade, disponivel, alerta}]
+  const [novoMatId, setNovoMatId] = useState('');
+  const [novoMatQty, setNovoMatQty] = useState('1');
+  const [alertasEstoque, setAlertasEstoque] = useState([]); // mensagens de alerta pós-consumo
+
   const carregar = useCallback(() => {
     setLoading(true);
     api.getOS()
@@ -109,6 +116,31 @@ const OrdensServico = () => {
       materiais_previstos: o.materiais_previstos || '',
     } : EMPTY);
     setErroForm('');
+    setMateriaisOS([]);
+    setNovoMatId('');
+    setNovoMatQty('1');
+    setAlertasEstoque([]);
+
+    // Carregar lista de estoque para o picker
+    api.getEstoque().then(data => {
+      setEstoqueList((data.items || []).sort((a, b) => (a.material_nome || a.material || '').localeCompare(b.material_nome || b.material || '')));
+    }).catch(() => {});
+
+    // Se editando, carregar materiais já consumidos desta OS
+    if (o) {
+      api.getMateriaisOS(o.id).then(items => {
+        setMateriaisOS(items.map(m => ({
+          estoque_id: m.estoque_id,
+          nome: m.material_nome,
+          unidade: m.unidade || 'un',
+          quantidade: m.quantidade,
+          disponivel: m.disponivel_atual,
+          alerta: m.alerta,
+          _existente: true, // já consumido
+        })));
+      }).catch(() => {});
+    }
+
     setShowModal(true);
   };
 
@@ -124,12 +156,72 @@ const OrdensServico = () => {
         materiais_previstos: form.materiais_previstos,
         motorista: form.motorista,
       };
-      if (editando) await api.updateOS(editando.id, payload);
-      else await api.createOS(payload);
+      let savedOS;
+      if (editando) {
+        savedOS = await api.updateOS(editando.id, payload);
+      } else {
+        savedOS = await api.createOS(payload);
+      }
+      const osId = savedOS?.id || (editando ? editando.id : null);
+
+      // Consumir materiais estruturados se houver
+      if (osId && materiaisOS.length > 0) {
+        const payloadMat = materiaisOS.map(m => ({ estoque_id: m.estoque_id, quantidade: m.quantidade }));
+        try {
+          const res = await api.consumirMateriaisOS(osId, payloadMat, false);
+          // Alertas de reposição após consumo
+          if (res.alertas_reposicao && res.alertas_reposicao.length > 0) {
+            const msgs = res.alertas_reposicao.map(a => `📦 ${a.material}: restam ${a.estoque_restante} ${a.unidade}`);
+            alert('⚠️ Alertas de reposição de estoque:\n\n' + msgs.join('\n'));
+          }
+        } catch (matErr) {
+          // 409 = insuficiente mas OS já foi salva → perguntar se quer forçar
+          if (matErr.status === 409 || (matErr.data && matErr.data.insuficientes)) {
+            const errData = matErr.data || {};
+            const alertasMsg = (errData.alertas || [matErr.message]).join('\n');
+            const forcar = window.confirm(
+              `⚠️ Estoque insuficiente!\n\n${alertasMsg}\n\nDeseja registrar mesmo assim (OS já foi salva)?`
+            );
+            if (forcar) {
+              await api.consumirMateriaisOS(osId, payloadMat, true).catch(() => {});
+            }
+          }
+          // Para outros erros de materiais, OS continua salva normalmente
+        }
+      }
+
       setShowModal(false);
       carregar();
     } catch (e) { setErroForm(e.message); }
     finally { setSalvando(false); }
+  };
+
+  // Adicionar material ao picker
+  const adicionarMaterial = () => {
+    if (!novoMatId || !novoMatQty || parseFloat(novoMatQty) <= 0) return;
+    const item = estoqueList.find(e => String(e.id) === String(novoMatId));
+    if (!item) return;
+    // Evitar duplicatas
+    const idx = materiaisOS.findIndex(m => m.estoque_id === item.id);
+    if (idx >= 0) {
+      // Atualizar quantidade existente
+      setMateriaisOS(prev => prev.map((m, i) => i === idx ? { ...m, quantidade: parseFloat(novoMatQty) } : m));
+    } else {
+      setMateriaisOS(prev => [...prev, {
+        estoque_id: item.id,
+        nome: item.material_nome || item.material,
+        unidade: item.unidade || 'un',
+        quantidade: parseFloat(novoMatQty),
+        disponivel: item.quantidade,
+        alerta: item.alerta,
+      }]);
+    }
+    setNovoMatId('');
+    setNovoMatQty('1');
+  };
+
+  const removerMaterial = (estoque_id) => {
+    setMateriaisOS(prev => prev.filter(m => m.estoque_id !== estoque_id));
   };
 
   const iniciar = async (id) => {
@@ -446,9 +538,97 @@ const OrdensServico = () => {
               <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Data/hora da mudança</label>
               <input type="datetime-local" value={form.data_mudanca} onChange={e => setForm({ ...form, data_mudanca: e.target.value })} style={inputStyle} />
             </div>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Materiais Previstos <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>(lista de itens a utilizar)</span></label>
-              <textarea value={form.materiais_previstos} onChange={e => setForm({ ...form, materiais_previstos: e.target.value })} rows={2} placeholder="Ex: 50 caixas de papelão, fita adesiva, papel bolha..." style={{ ...inputStyle, resize: 'vertical' }} />
+            {/* ── MATERIAIS DO ESTOQUE ── */}
+            <div style={{ marginBottom: '12px', border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+              <div style={{ background: '#f8fafc', padding: '10px 14px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Package size={14} color="#0f1f3d" />
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#0f1f3d' }}>Materiais do Estoque</span>
+                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '4px' }}>— abate automático ao salvar</span>
+              </div>
+              <div style={{ padding: '12px 14px' }}>
+                {/* Alertas de insuficiência */}
+                {materiaisOS.some(m => m.disponivel < m.quantidade) && (
+                  <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', marginBottom: '10px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                    <AlertTriangle size={14} color="#dc2626" style={{ marginTop: '1px', flexShrink: 0 }} />
+                    <div>
+                      <p style={{ margin: 0, fontSize: '12px', fontWeight: '600', color: '#dc2626' }}>Estoque insuficiente!</p>
+                      {materiaisOS.filter(m => m.disponivel < m.quantidade).map(m => (
+                        <p key={m.estoque_id} style={{ margin: '2px 0 0', fontSize: '11px', color: '#ef4444' }}>
+                          {m.nome}: solicitado {m.quantidade} {m.unidade}, disponível {m.disponivel} {m.unidade}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Lista de materiais selecionados */}
+                {materiaisOS.length > 0 && (
+                  <div style={{ marginBottom: '10px' }}>
+                    {materiaisOS.map((m) => {
+                      const insuf = m.disponivel < m.quantidade;
+                      const baixo = !insuf && m.alerta;
+                      return (
+                        <div key={m.estoque_id} style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '6px 10px', borderRadius: '8px', marginBottom: '4px',
+                          background: insuf ? '#fef2f2' : baixo ? '#fffbeb' : '#f0fdf4',
+                          border: `1px solid ${insuf ? '#fecaca' : baixo ? '#fde68a' : '#bbf7d0'}`,
+                        }}>
+                          <span style={{ fontSize: '12px', flex: 1, fontWeight: '500', color: '#1a1a1a' }}>{m.nome}</span>
+                          <input
+                            type="number" min="1" step="1"
+                            value={m.quantidade}
+                            onChange={e => setMateriaisOS(prev => prev.map(x => x.estoque_id === m.estoque_id ? { ...x, quantidade: parseFloat(e.target.value) || 1 } : x))}
+                            style={{ width: '65px', padding: '3px 6px', border: '1px solid #e5e7eb', borderRadius: '6px', fontSize: '12px', textAlign: 'center' }}
+                          />
+                          <span style={{ fontSize: '11px', color: '#6b7280', minWidth: '28px' }}>{m.unidade}</span>
+                          <span style={{ fontSize: '11px', color: insuf ? '#dc2626' : '#6b7280', minWidth: '70px', textAlign: 'right' }}>
+                            {insuf ? `⚠️ ${m.disponivel} disp.` : baixo ? `⚡ ${m.disponivel} disp.` : `✓ ${m.disponivel} disp.`}
+                          </span>
+                          <button onClick={() => removerMaterial(m.estoque_id)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '2px', lineHeight: 1 }}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Adicionar item */}
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <select
+                    value={novoMatId}
+                    onChange={e => setNovoMatId(e.target.value)}
+                    style={{ flex: 1, padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px', background: 'white' }}
+                  >
+                    <option value="">— Selecionar item do estoque —</option>
+                    {estoqueList.map(e => (
+                      <option key={e.id} value={e.id}>
+                        {e.material_nome || e.material} ({e.quantidade} {e.unidade || 'un'}{e.alerta ? ` ⚠️` : ''})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number" min="1" step="1"
+                    value={novoMatQty}
+                    onChange={e => setNovoMatQty(e.target.value)}
+                    style={{ width: '65px', padding: '7px 8px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px', textAlign: 'center' }}
+                    placeholder="Qtd"
+                  />
+                  <button
+                    type="button" onClick={adicionarMaterial}
+                    disabled={!novoMatId || !novoMatQty}
+                    style={{ padding: '7px 12px', background: novoMatId && novoMatQty ? '#0f1f3d' : '#e5e7eb', color: novoMatId && novoMatQty ? 'white' : '#9ca3af', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: novoMatId && novoMatQty ? 'pointer' : 'default', fontWeight: '600', whiteSpace: 'nowrap' }}
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+
+                {estoqueList.length === 0 && (
+                  <p style={{ margin: '8px 0 0', fontSize: '11px', color: '#9ca3af', textAlign: 'center' }}>Nenhum item cadastrado no estoque ainda.</p>
+                )}
+              </div>
             </div>
             <div style={{ marginBottom: '12px' }}>
               <label style={{ fontSize: '13px', color: '#374151', fontWeight: '500', display: 'block', marginBottom: '4px' }}>Observações Operacionais</label>

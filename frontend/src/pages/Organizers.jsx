@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Heart, Plus, Search, Edit, Trash2, AlertCircle, X, TrendingUp,
   Users, DollarSign, Award, Star, BarChart2, ChevronDown, ChevronUp,
-  Bell, Calendar, CheckCircle, Eye
+  Bell, Calendar, CheckCircle, Eye, FileText, AlertTriangle, Clock
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -56,6 +57,7 @@ export default function Organizers() {
   const [dashboardData, setDashboardData] = useState(null);
   const [loadingDash, setLoadingDash] = useState(false);
   const [comissoesData, setComissoesData] = useState([]);
+  const [leadsData, setLeadsData] = useState([]);
   const [pagandoComissao, setPagandoComissao] = useState(null); // id da comissão sendo paga
 
   const carregar = useCallback(async () => {
@@ -73,14 +75,17 @@ export default function Organizers() {
     setDetalhes(o);
     setDashboardData(null);
     setComissoesData([]);
+    setLeadsData([]);
     setLoadingDash(true);
     try {
-      const [d, comissoes] = await Promise.all([
+      const [d, comissoes, leads] = await Promise.all([
         api.getOrganizerDashboard(o.id),
         api.getOrganizerComissoes(o.id),
+        api.getOrganizerLeads(o.id),
       ]);
       setDashboardData(d);
       setComissoesData(comissoes);
+      setLeadsData(Array.isArray(leads) ? leads : []);
     } catch (e) { setDashboardData(null); }
     finally { setLoadingDash(false); }
   };
@@ -469,6 +474,7 @@ export default function Organizers() {
                 <DashboardOrganizer
                   data={dashboardData}
                   comissoes={comissoesData}
+                  leads={leadsData}
                   onPagar={handlePagarComissao}
                   pagandoId={pagandoComissao}
                 />
@@ -549,28 +555,69 @@ export default function Organizers() {
   );
 }
 
-function DashboardOrganizer({ data, comissoes = [], onPagar, pagandoId }) {
+function DashboardOrganizer({ data, comissoes = [], leads = [], onPagar, pagandoId }) {
   const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+  const fmtDate = (v) => v ? new Date(v).toLocaleDateString('pt-BR') : '—';
+  const navigate = useNavigate();
   const cls = CLASSIFICACAO_CONFIG[data.classificacao] || CLASSIFICACAO_CONFIG.bronze;
   const [obsModal, setObsModal] = useState(null); // { id, valor }
   const [obs, setObs] = useState('');
+  const [abaAtiva, setAbaAtiva] = useState('resumo'); // 'resumo' | 'indicacoes' | 'comissoes'
+  const [filtroLead, setFiltroLead] = useState('todos'); // todos | convertido | perdido | andamento
 
   const pendentes = comissoes.filter(c => c.status === 'pendente');
   const pagas = comissoes.filter(c => c.status === 'pago');
+
+  // Classificação dos leads para exibição
+  const STATUS_LEAD = {
+    convertido:    { label: 'Fechado',       color: '#16a34a', bg: '#dcfce7', icon: '✓' },
+    perdido:       { label: 'Perdido',        color: '#dc2626', bg: '#fef2f2', icon: '✗' },
+    cancelado:     { label: 'Cancelado',      color: '#6b7280', bg: '#f3f4f6', icon: '—' },
+    arquivado:     { label: 'Arquivado',      color: '#9ca3af', bg: '#f9fafb', icon: '◻' },
+    em_atendimento:{ label: 'Em andamento',   color: '#d97706', bg: '#fffbeb', icon: '⏳' },
+    novo:          { label: 'Novo',           color: '#2563eb', bg: '#eff6ff', icon: '●' },
+  };
+
+  const leadsExibir = leads.filter(l => {
+    if (filtroLead === 'todos') return true;
+    if (filtroLead === 'convertido') return l.status === 'convertido';
+    if (filtroLead === 'perdido') return ['perdido', 'cancelado', 'arquivado'].includes(l.status);
+    if (filtroLead === 'andamento') return ['novo', 'em_atendimento'].includes(l.status);
+    return true;
+  });
 
   return (
     <div>
       {/* Alertas */}
       {(data.alertas || []).length > 0 && (
-        <div style={{ marginBottom: '16px' }}>
+        <div style={{ marginBottom: '12px' }}>
           {data.alertas.map((a, i) => (
-            <div key={i} style={{ background: a.tipo === 'inatividade' ? '#fef3c7' : '#f0fdf4', border: `1px solid ${a.tipo === 'inatividade' ? '#fcd34d' : '#86efac'}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: a.tipo === 'inatividade' ? '#92400e' : '#166534' }}>
-              {a.tipo === 'inatividade' ? <Bell size={14} /> : <CheckCircle size={14} />}
+            <div key={i} style={{ background: a.tipo === 'inatividade' ? '#fef3c7' : '#f0fdf4', border: `1px solid ${a.tipo === 'inatividade' ? '#fcd34d' : '#86efac'}`, borderRadius: '8px', padding: '8px 12px', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: a.tipo === 'inatividade' ? '#92400e' : '#166534' }}>
+              {a.tipo === 'inatividade' ? <Bell size={13} /> : <CheckCircle size={13} />}
               {a.msg}
             </div>
           ))}
         </div>
       )}
+
+      {/* Abas */}
+      <div style={{ display: 'flex', gap: '4px', background: '#f9fafb', padding: '4px', borderRadius: '10px', border: '0.5px solid #e5e7eb', marginBottom: '16px', width: 'fit-content' }}>
+        {[
+          ['resumo', '📊 Resumo'],
+          ['indicacoes', `👥 Indicações (${leads.length})`],
+          ['comissoes', `💰 Comissões (${comissoes.length})`],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => setAbaAtiva(k)}
+            style={{ padding: '6px 14px', borderRadius: '7px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '500',
+              background: abaAtiva === k ? '#0f1f3d' : 'transparent',
+              color: abaAtiva === k ? 'white' : '#6b7280' }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── ABA RESUMO ── */}
+      {abaAtiva === 'resumo' && (<>
 
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
@@ -608,8 +655,151 @@ function DashboardOrganizer({ data, comissoes = [], onPagar, pagandoId }) {
         </div>
       )}
 
-      {/* Comissões */}
-      {comissoes.length > 0 && (
+      </>)}
+      {/* ── ABA INDICAÇÕES ── */}
+      {abaAtiva === 'indicacoes' && (
+        <div>
+          {/* Filtros */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+            {[
+              ['todos', `Todos (${leads.length})`],
+              ['convertido', `✓ Fechados (${leads.filter(l=>l.status==='convertido').length})`],
+              ['perdido', `✗ Não fechados (${leads.filter(l=>['perdido','cancelado','arquivado'].includes(l.status)).length})`],
+              ['andamento', `⏳ Em andamento (${leads.filter(l=>['novo','em_atendimento'].includes(l.status)).length})`],
+            ].map(([k, l]) => (
+              <button key={k} onClick={() => setFiltroLead(k)}
+                style={{ padding: '5px 12px', borderRadius: '20px', border: `1.5px solid ${filtroLead===k ? '#0f1f3d' : '#e5e7eb'}`,
+                  background: filtroLead===k ? '#0f1f3d' : 'white', color: filtroLead===k ? 'white' : '#6b7280',
+                  fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {leadsExibir.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af', fontSize: '13px' }}>
+              <Users size={32} style={{ margin: '0 auto 8px', display: 'block', opacity: 0.4 }} />
+              Nenhum lead encontrado com este filtro
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {leadsExibir.map(lead => {
+                const sconf = STATUS_LEAD[lead.status] || STATUS_LEAD['novo'];
+                const fechado = lead.status === 'convertido';
+                const naoFechado = ['perdido', 'cancelado', 'arquivado'].includes(lead.status);
+                return (
+                  <div key={lead.id} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px 16px',
+                    borderLeft: `4px solid ${sconf.color}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                          <span style={{ fontWeight: '700', fontSize: '14px', color: '#1a1a1a' }}>{lead.nome}</span>
+                          <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', fontWeight: '600',
+                            background: sconf.bg, color: sconf.color }}>
+                            {sconf.icon} {sconf.label}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                          {lead.telefone && <span style={{ marginRight: '12px' }}>📞 {lead.telefone}</span>}
+                          {lead.email && <span style={{ marginRight: '12px' }}>✉ {lead.email}</span>}
+                          {lead.created_at && <span>📅 {fmtDate(lead.created_at)}</span>}
+                        </div>
+                      </div>
+                      {/* Ação principal */}
+                      {fechado && lead.os && (
+                        <button
+                          onClick={() => navigate(`/ordens-servico?id=${lead.os.id}`)}
+                          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px',
+                            background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '7px',
+                            cursor: 'pointer', fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                          <FileText size={13} />
+                          {lead.os.numero || `OS #${lead.os.id}`}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Dados do Orçamento */}
+                    {lead.orcamento && (
+                      <div style={{ background: '#f9fafb', borderRadius: '7px', padding: '10px 12px', marginTop: '8px' }}>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <div>
+                            <span style={{ fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600 }}>Orçamento</span>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#1a1a1a' }}>{fmt(lead.orcamento.valor)}</div>
+                          </div>
+                          {lead.orcamento.numero && (
+                            <div>
+                              <span style={{ fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600 }}>Nº</span>
+                              <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>{lead.orcamento.numero}</div>
+                            </div>
+                          )}
+                          {lead.orcamento.data_prevista && (
+                            <div>
+                              <span style={{ fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600 }}>Data prevista</span>
+                              <div style={{ fontSize: '12px', color: '#374151' }}>{fmtDate(lead.orcamento.data_prevista)}</div>
+                            </div>
+                          )}
+                          {fechado && lead.os && (
+                            <div>
+                              <span style={{ fontSize: '10px', color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600 }}>OS</span>
+                              <div style={{ fontSize: '13px', fontWeight: 700, color: '#16a34a' }}>{fmt(lead.os.valor_total)}</div>
+                            </div>
+                          )}
+                        </div>
+                        {/* Endereços */}
+                        {(lead.orcamento.endereco_origem || lead.orcamento.endereco_destino) && (
+                          <div style={{ marginTop: '8px', fontSize: '11px', color: '#6b7280', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                            {lead.orcamento.endereco_origem && <span>🔵 {lead.orcamento.endereco_origem}</span>}
+                            {lead.orcamento.endereco_destino && <span>🔴 {lead.orcamento.endereco_destino}</span>}
+                          </div>
+                        )}
+                        {/* OS status quando fechado */}
+                        {fechado && lead.os && lead.os.status && (
+                          <div style={{ marginTop: '6px', fontSize: '11px' }}>
+                            <span style={{ padding: '2px 8px', borderRadius: '20px', fontWeight: 600,
+                              background: lead.os.status === 'finalizada' ? '#dcfce7' : lead.os.status === 'cancelada' ? '#fee2e2' : '#fef3c7',
+                              color: lead.os.status === 'finalizada' ? '#16a34a' : lead.os.status === 'cancelada' ? '#dc2626' : '#d97706' }}>
+                              OS: {lead.os.status}
+                              {lead.os.data_mudanca ? ` · ${fmtDate(lead.os.data_mudanca)}` : ''}
+                            </span>
+                          </div>
+                        )}
+                        {/* Justificativa de não fechamento */}
+                        {naoFechado && lead.orcamento.justificativa && (
+                          <div style={{ marginTop: '8px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '8px 10px', display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                            <AlertTriangle size={13} style={{ color: '#dc2626', marginTop: '1px', flexShrink: 0 }} />
+                            <div>
+                              <span style={{ fontSize: '10px', fontWeight: 700, color: '#dc2626', display: 'block', marginBottom: '2px' }}>JUSTIFICATIVA</span>
+                              <span style={{ fontSize: '12px', color: '#7f1d1d' }}>{lead.orcamento.justificativa}</span>
+                            </div>
+                          </div>
+                        )}
+                        {/* Em andamento sem justificativa */}
+                        {!fechado && !naoFechado && (
+                          <div style={{ marginTop: '6px', fontSize: '11px', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Clock size={12} /> Aguardando decisão do cliente
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!lead.orcamento && !fechado && (
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>Sem orçamento registrado</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ABA COMISSÕES ── */}
+      {abaAtiva === 'comissoes' && comissoes.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '48px', color: '#9ca3af', fontSize: '13px' }}>
+          <DollarSign size={36} style={{ margin: '0 auto 10px', display: 'block', opacity: 0.3 }} />
+          Nenhuma comissão registrada ainda
+        </div>
+      )}
+      {abaAtiva === 'comissoes' && comissoes.length > 0 && (
         <div style={{ marginTop: 4 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <h4 style={{ fontSize: '13px', fontWeight: '600', color: '#374151', margin: 0 }}>

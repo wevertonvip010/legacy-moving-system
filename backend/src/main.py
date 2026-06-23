@@ -234,7 +234,58 @@ def _contrato_dict(c):
     }
 
 
+def _os_equipe_completa(o):
+    """
+    Retorna a equipe completa da OS como string, priorizando:
+    1. Campo texto livre o.equipe (se preenchido)
+    2. FuncionarioOS → nomes dos Funcionário vinculados
+    3. Equipes das etapas operacionais (agregadas sem repetição)
+    """
+    # 1. Campo texto livre
+    if o.equipe and o.equipe.strip():
+        return o.equipe.strip()
+
+    # 2. FuncionarioOS — funcionários vinculados diretamente à OS
+    nomes = []
+    links = FuncionarioOS.query.filter_by(os_id=o.id).all()
+    for lk in links:
+        f = Funcionario.query.get(lk.funcionario_id)
+        if f and f.nome and f.nome not in nomes:
+            nomes.append(f.nome)
+
+    # 3. Etapas operacionais — equipe textual de cada etapa
+    if not nomes:
+        etapas = EtapaOperacional.query.filter_by(os_id=o.id).all()
+        for et in etapas:
+            if et.equipe:
+                for nome in et.equipe.split(','):
+                    nome = nome.strip()
+                    if nome and nome not in nomes:
+                        nomes.append(nome)
+
+    return ', '.join(nomes) if nomes else ''
+
+
+def _os_veiculo_completo(o):
+    """
+    Retorna o veículo/caminhão da OS, buscando também nas etapas se o campo principal estiver vazio.
+    """
+    if o.veiculo and o.veiculo.strip():
+        return o.veiculo.strip()
+    # Buscar nas etapas
+    etapas = EtapaOperacional.query.filter_by(os_id=o.id).all()
+    veiculos = []
+    for et in etapas:
+        if et.veiculos:
+            for v in et.veiculos.split(','):
+                v = v.strip()
+                if v and v not in veiculos:
+                    veiculos.append(v)
+    return ', '.join(veiculos) if veiculos else ''
+
+
 def _os_dict(o):
+    """Dict leve — usado na listagem (sem queries extras de equipe/veículo)."""
     con = Contrato.query.get(o.contrato_id) if o.contrato_id else None
     return {
         "id": o.id, "numero": o.numero, "contrato_id": o.contrato_id,
@@ -258,6 +309,14 @@ def _os_dict(o):
         "drive_url": o.drive_url, "status": o.status,
         "created_at": o.created_at.isoformat() if o.created_at else None,
     }
+
+
+def _os_dict_full(o):
+    """Dict completo com equipe/veículo enriquecidos de FuncionarioOS e etapas."""
+    base = _os_dict(o)
+    base['equipe'] = _os_equipe_completa(o)
+    base['veiculo'] = _os_veiculo_completo(o)
+    return base
 
 
 def _recibo_dict(r):
@@ -1317,6 +1376,95 @@ def comissoes_organizer(id):
     } for c in comissoes])
 
 
+@app.route('/api/organizers/<int:id>/leads', methods=['GET'])
+@jwt_required()
+def leads_organizer(id):
+    """
+    Retorna todos os leads indicados por esta organizer com dados completos:
+    - Convertidos: link para a OS gerada
+    - Não convertidos: valor do orçamento + justificativa
+    """
+    Organizer.query.get_or_404(id)
+    leads = Lead.query.filter_by(organizer_id=id).order_by(Lead.created_at.desc()).all()
+
+    result = []
+    for l in leads:
+        item = {
+            "id": l.id,
+            "nome": l.nome,
+            "telefone": l.telefone,
+            "email": l.email,
+            "status": l.status,
+            "origem": l.origem,
+            "tipo_servico": l.tipo_servico,
+            "created_at": l.created_at.isoformat() if l.created_at else None,
+            # Orçamento
+            "orcamento": None,
+            # OS (se convertido)
+            "os": None,
+        }
+
+        # Busca orçamento: via lead.orcamento_id ou Orcamento.lead_id
+        orc = None
+        if l.orcamento_id:
+            orc = Orcamento.query.get(l.orcamento_id)
+        if not orc:
+            orc = Orcamento.query.filter_by(lead_id=l.id).first()
+
+        if orc:
+            orig_parts = [orc.orig_rua, orc.orig_numero, orc.orig_bairro, orc.orig_cidade, orc.orig_estado]
+            dest_parts = [orc.dest_rua, orc.dest_numero, orc.dest_bairro, orc.dest_cidade, orc.dest_estado]
+            orig = ', '.join(p for p in orig_parts if p)
+            dest = ', '.join(p for p in dest_parts if p)
+            item["orcamento"] = {
+                "id": orc.id,
+                "numero": orc.numero,
+                "valor": (orc.valor_servico or 0) + (orc.valor_seguro or 0),
+                "valor_servico": orc.valor_servico or 0,
+                "valor_seguro": orc.valor_seguro or 0,
+                "status": orc.status,
+                "justificativa": orc.justificativa,
+                "data_prevista": orc.data_prevista.isoformat() if orc.data_prevista else None,
+                "endereco_origem": orig or None,
+                "endereco_destino": dest or None,
+            }
+
+            # Busca OS: Orcamento → Contrato → OrdemServico
+            contrato = Contrato.query.filter_by(orcamento_id=orc.id).first()
+            if contrato:
+                os_ = OrdemServico.query.filter_by(contrato_id=contrato.id).first()
+                if not os_ and orc.cliente_id:
+                    os_ = OrdemServico.query.filter_by(cliente_id=orc.cliente_id).first()
+                if os_:
+                    item["os"] = {
+                        "id": os_.id,
+                        "numero": os_.numero,
+                        "status": os_.status,
+                        "data_mudanca": os_.data_mudanca.isoformat() if os_.data_mudanca else None,
+                        "valor_total": os_.valor_total or 0,
+                        "endereco_origem": os_.endereco_origem,
+                        "endereco_destino": os_.endereco_destino,
+                    }
+            # Fallback: buscar OS diretamente pelo cliente_id do orçamento
+            if not item["os"] and orc.cliente_id:
+                os_ = OrdemServico.query.filter_by(cliente_id=orc.cliente_id)\
+                    .order_by(OrdemServico.created_at.desc()).first()
+                if os_:
+                    item["os"] = {
+                        "id": os_.id,
+                        "numero": os_.numero,
+                        "status": os_.status,
+                        "data_mudanca": os_.data_mudanca.isoformat() if os_.data_mudanca else None,
+                        "valor_total": os_.valor_total or 0,
+                        "endereco_origem": os_.endereco_origem,
+                        "endereco_destino": os_.endereco_destino,
+                    }
+
+        result.append(item)
+
+    return jsonify(result)
+
+
 @app.route('/api/organizers', methods=['POST'])
 @require_role('admin', 'vendedor')
 def criar_organizer():
@@ -1656,7 +1804,8 @@ def listar_os():
 @app.route('/api/os/<int:id>', methods=['GET'])
 @require_role('admin', 'vendedor', 'operacional')
 def obter_os(id):
-    return jsonify(_os_dict(OrdemServico.query.get_or_404(id)))
+    # _os_dict_full inclui equipe completa de FuncionarioOS + etapas + veículo das etapas
+    return jsonify(_os_dict_full(OrdemServico.query.get_or_404(id)))
 
 
 @app.route('/api/os', methods=['POST'])
@@ -1808,8 +1957,20 @@ def _descontar_estoque(os_):
 def cancelar_os(id):
     os_ = OrdemServico.query.get_or_404(id)
     os_.status = 'cancelada'
+    # Devolve materiais consumidos ao estoque automaticamente
+    movs = MovimentacaoEstoque.query.filter_by(os_id=id, tipo='consumo_os').all()
+    devolvidos = 0
+    for m in movs:
+        e = Estoque.query.get(m.estoque_id)
+        if e:
+            e.quantidade += m.quantidade
+            devolvidos += 1
+        db.session.delete(m)
     db.session.commit()
-    return jsonify(_os_dict(os_))
+    result = _os_dict(os_)
+    if devolvidos > 0:
+        result['_materiais_devolvidos'] = devolvidos
+    return jsonify(result)
 
 
 # ── ETAPAS OPERACIONAIS ───────────────────────────────────────────────────────
@@ -2449,6 +2610,194 @@ def movimentacoes_recentes():
             "created_at": m.created_at.isoformat() if m.created_at else None,
         })
     return jsonify(result)
+
+
+# ── OS ↔ ESTOQUE — consumo de materiais por OS ───────────────────────────────
+
+@app.route('/api/os/<int:id>/materiais', methods=['GET'])
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
+def listar_materiais_os(id):
+    """Lista os materiais já consumidos por esta OS (MovimentacaoEstoque tipo consumo_os)."""
+    OrdemServico.query.get_or_404(id)
+    movs = MovimentacaoEstoque.query.filter_by(os_id=id, tipo='consumo_os').all()
+    result = []
+    for m in movs:
+        e = Estoque.query.get(m.estoque_id) if m.estoque_id else None
+        result.append({
+            "id": m.id,
+            "estoque_id": m.estoque_id,
+            "material_nome": e.nome_material if e else '—',
+            "unidade": e.unidade if e else 'un',
+            "quantidade": m.quantidade,
+            "valor_unitario": m.valor_unitario,
+            "valor_total": m.valor_total,
+            "disponivel_atual": e.quantidade if e else 0,
+            "alerta": e.alerta if e else None,
+        })
+    return jsonify(result)
+
+
+@app.route('/api/os/<int:id>/materiais/verificar', methods=['POST'])
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
+def verificar_materiais_os(id):
+    """
+    Verifica disponibilidade de estoque SEM consumir.
+    Body: { materiais: [{estoque_id, quantidade}, ...] }
+    Retorna: lista de itens com ok=True/False + alertas de reposição.
+    """
+    OrdemServico.query.get_or_404(id)
+    data = request.json or {}
+    materiais = data.get('materiais', [])
+    resultado = []
+    alertas = []
+    for item in materiais:
+        eid = item.get('estoque_id')
+        qtd = float(item.get('quantidade', 0))
+        e = Estoque.query.get(eid) if eid else None
+        if not e:
+            resultado.append({"estoque_id": eid, "ok": False, "erro": "Item não encontrado no estoque"})
+            continue
+        disponivel = e.quantidade
+        ok = disponivel >= qtd
+        alerta_reposicao = not ok or (disponivel - qtd) <= e.estoque_minimo
+        item_res = {
+            "estoque_id": eid,
+            "material_nome": e.nome_material,
+            "unidade": e.unidade,
+            "quantidade_solicitada": qtd,
+            "quantidade_disponivel": disponivel,
+            "quantidade_restante_apos": disponivel - qtd,
+            "ok": ok,
+            "alerta_reposicao": alerta_reposicao,
+            "nivel": "critico" if (disponivel - qtd) <= e.estoque_critico else ("baixo" if alerta_reposicao else "ok"),
+        }
+        resultado.append(item_res)
+        if not ok:
+            alertas.append(f"⚠️ {e.nome_material}: solicitado {qtd} {e.unidade}, disponível apenas {disponivel} {e.unidade}")
+        elif alerta_reposicao:
+            alertas.append(f"📦 {e.nome_material}: após uso restará {disponivel - qtd:.0f} {e.unidade} (abaixo do mínimo de {e.estoque_minimo})")
+    return jsonify({
+        "pode_prosseguir": all(r['ok'] for r in resultado),
+        "alertas": alertas,
+        "itens": resultado,
+    })
+
+
+@app.route('/api/os/<int:id>/materiais/consumir', methods=['POST'])
+@require_role('admin', 'operacional', 'vendedor')
+def consumir_materiais_os(id):
+    """
+    Consome materiais do estoque para esta OS.
+    Body: { materiais: [{estoque_id, quantidade}], forcar: false }
+    Se forcar=False e houver insuficiência → retorna erro 409 com alertas.
+    """
+    os_ = OrdemServico.query.get_or_404(id)
+    data = request.json or {}
+    materiais = data.get('materiais', [])
+    forcar = bool(data.get('forcar', False))
+    u = current_user()
+
+    # 1. Verificar disponibilidade de todos antes de consumir qualquer um
+    insuficientes = []
+    for item in materiais:
+        e = Estoque.query.get(item.get('estoque_id'))
+        if not e:
+            return err(f"Item de estoque #{item.get('estoque_id')} não encontrado", 404)
+        qtd = float(item.get('quantidade', 0))
+        if qtd <= 0:
+            return err(f"Quantidade inválida para {e.nome_material}")
+        if e.quantidade < qtd:
+            insuficientes.append({
+                "material": e.nome_material,
+                "solicitado": qtd,
+                "disponivel": e.quantidade,
+                "unidade": e.unidade,
+            })
+
+    if insuficientes and not forcar:
+        msgs = [f"{i['material']}: solicitado {i['solicitado']} {i['unidade']}, disponível {i['disponivel']}" for i in insuficientes]
+        return jsonify({
+            "erro": "Estoque insuficiente",
+            "insuficientes": insuficientes,
+            "alertas": msgs,
+            "pode_forcar": True,
+        }), 409
+
+    # 2. Remover consumos anteriores desta OS (re-consumo limpo ao salvar)
+    movs_anteriores = MovimentacaoEstoque.query.filter_by(os_id=id, tipo='consumo_os').all()
+    for mov_ant in movs_anteriores:
+        e_ant = Estoque.query.get(mov_ant.estoque_id)
+        if e_ant:
+            e_ant.quantidade += mov_ant.quantidade  # devolve antes de re-consumir
+        db.session.delete(mov_ant)
+    db.session.flush()
+
+    # 3. Consumir
+    consumidos = []
+    texto_materiais = []
+    for item in materiais:
+        e = Estoque.query.get(item['estoque_id'])
+        qtd = float(item['quantidade'])
+        qtd_antes = e.quantidade
+        qtd_real = min(qtd, e.quantidade)  # se forcar, consome o disponível
+        e.quantidade -= qtd_real
+
+        mov = MovimentacaoEstoque(
+            estoque_id=e.id,
+            os_id=id,
+            user_id=u.id if u else None,
+            tipo='consumo_os',
+            quantidade=qtd_real,
+            quantidade_anterior=qtd_antes,
+            quantidade_posterior=e.quantidade,
+            valor_unitario=e.valor_unitario or 0,
+            valor_total=(e.valor_unitario or 0) * qtd_real,
+            observacao=f"Consumo para OS {os_.numero}"
+        )
+        db.session.add(mov)
+        consumidos.append({
+            "material": e.nome_material,
+            "quantidade": qtd_real,
+            "unidade": e.unidade,
+            "estoque_restante": e.quantidade,
+            "alerta": e.alerta,
+        })
+        texto_materiais.append(f"{qtd_real:.0f} {e.unidade} {e.nome_material}")
+
+    # 4. Atualiza campo texto da OS para rastreabilidade
+    if texto_materiais:
+        os_.materiais_previstos = ', '.join(texto_materiais)
+
+    db.session.commit()
+
+    # 5. Alertas pós-consumo (itens que ficaram abaixo do mínimo)
+    alertas_reposicao = [
+        c for c in consumidos
+        if c['alerta'] in ('critico', 'baixo')
+    ]
+
+    return jsonify({
+        "consumidos": consumidos,
+        "alertas_reposicao": alertas_reposicao,
+        "materiais_texto": os_.materiais_previstos,
+    }), 200
+
+
+@app.route('/api/os/<int:id>/materiais/devolver', methods=['POST'])
+@require_role('admin', 'operacional')
+def devolver_materiais_os(id):
+    """Devolve todos os materiais consumidos por esta OS ao estoque (ex: cancelamento)."""
+    OrdemServico.query.get_or_404(id)
+    movs = MovimentacaoEstoque.query.filter_by(os_id=id, tipo='consumo_os').all()
+    devolvidos = []
+    for m in movs:
+        e = Estoque.query.get(m.estoque_id)
+        if e:
+            e.quantidade += m.quantidade
+            devolvidos.append({"material": e.nome_material, "quantidade": m.quantidade, "unidade": e.unidade})
+        db.session.delete(m)
+    db.session.commit()
+    return jsonify({"devolvidos": devolvidos, "total": len(devolvidos)})
 
 
 # ── GUARDA-MÓVEIS ─────────────────────────────────────────────────────────────
