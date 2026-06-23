@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Plus, ChevronLeft, ChevronRight, AlertCircle, X, Edit, Trash2, RefreshCw, Truck, Share2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Calendar, Plus, ChevronLeft, ChevronRight, AlertCircle, X, Edit, Trash2, RefreshCw, Truck, Share2, User, Lock } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
 
 const DIAS_SEMANA_CURTO = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const DIAS_SEMANA_LONGO = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -60,6 +61,9 @@ function isoDate(d) {
 
 /* ── Componente principal ────────────────────────────────────────────────── */
 const Programacao = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   // ── Visão semanal ──────────────────────────────────────────────────────────
   const [semana, setSemana] = useState(() => getSemanaISO(new Date())[1]);
   const [ano,    setAno]    = useState(() => getSemanaISO(new Date())[0]);
@@ -78,6 +82,7 @@ const Programacao = () => {
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState(null);
   const [sincronizando, setSincronizando] = useState(false);
+  const [gcalStatus, setGcalStatus] = useState(null);
 
   // ── Modal de alocação ──────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
@@ -87,6 +92,16 @@ const Programacao = () => {
   const [erroForm,  setErroForm]  = useState('');
   const [funcionarios, setFuncionarios] = useState([]);
   const [dragItem, setDragItem] = useState(null);
+
+  // Autocomplete equipe
+  const [equipeQuery, setEquipeQuery]   = useState('');
+  const [equipeDropdown, setEquipeDropdown] = useState(false);
+  const equipeRef = useRef(null);
+
+  // Modal de justificativa para exclusão por não-admin
+  const [modalJustif, setModalJustif] = useState(null); // { id, cliente }
+  const [justificativa, setJustificativa] = useState('');
+  const [excluindo, setExcluindo] = useState(false);
 
   /* ── Carga de dados ────────────────────────────────────────────────────── */
   const carregar = useCallback(async () => {
@@ -117,6 +132,7 @@ const Programacao = () => {
 
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => { api.getFuncionarios().then(setFuncionarios).catch(() => {}); }, []);
+  useEffect(() => { api.getGcalStatus().then(setGcalStatus).catch(() => {}); }, []);
 
   /* ── Navegação semanal ─────────────────────────────────────────────────── */
   const semanaAnterior = () => { if (semana === 1) { setSemana(52); setAno(a => a - 1); } else setSemana(s => s - 1); };
@@ -164,6 +180,8 @@ const Programacao = () => {
       ? { cliente: p.cliente, tipo_servico: p.tipo_servico || 'mudanca', data: p.data ? p.data.slice(0, 16) : '', equipe: p.equipe || '', veiculo: p.veiculo || '', status: p.status }
       : { cliente: '', tipo_servico: 'mudanca', data: dataStr, equipe: '', veiculo: '', status: 'agendado' });
     setErroForm('');
+    setEquipeQuery('');
+    setEquipeDropdown(false);
     setShowModal(true);
   };
 
@@ -179,10 +197,32 @@ const Programacao = () => {
     finally    { setSalvando(false); }
   };
 
-  const deletar = async (id) => {
-    if (!confirm('Remover alocação?')) return;
-    try { await api.deleteProgramacao(id); carregar(); }
-    catch (e) { alert(e.message); }
+  // Verifica se o usuário pode editar/excluir um registro
+  const podeMexer = (p) => isAdmin || (user && p.criado_por_id === user.id);
+
+  const iniciarExclusao = (p) => {
+    if (!podeMexer(p)) {
+      alert('Apenas o admin ou quem criou este agendamento pode excluí-lo.');
+      return;
+    }
+    if (isAdmin) {
+      if (!confirm(`Remover alocação de ${p.cliente}?`)) return;
+      executarExclusao(p.id, null);
+    } else {
+      // Não-admin: precisa justificar
+      setJustificativa('');
+      setModalJustif({ id: p.id, cliente: p.cliente });
+    }
+  };
+
+  const executarExclusao = async (id, just) => {
+    setExcluindo(true);
+    try {
+      await api.deleteProgramacao(id, just ? { justificativa: just } : undefined);
+      setModalJustif(null);
+      carregar();
+    } catch (e) { alert(e.message); }
+    finally { setExcluindo(false); }
   };
 
   const sincronizar = async () => {
@@ -242,12 +282,29 @@ const Programacao = () => {
           <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1a1a1a', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Calendar size={20} color="#0f1f3d" /> Programação de Equipe
           </h1>
-          <p style={{ color: '#6b7280', fontSize: '13px', margin: 0 }}>
+          <p style={{ color: '#6b7280', fontSize: '13px', margin: '0 0 6px' }}>
             {viewMode === 'mes'
               ? `${MESES_PT[mesVis - 1]} ${anoVis} · ${totalOsMes} OS · ${progsMesAll.length} alocações`
               : `Semana ${semana} de ${ano} · ${osSemana.length} OS · ${programacoes.length} alocações`
             }
           </p>
+          {/* Badge Google Calendar */}
+          {gcalStatus && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: '5px',
+              fontSize: '11px', padding: '3px 9px', borderRadius: '20px',
+              background: gcalStatus.configurado ? '#f0fdf4' : '#fef9c3',
+              color:      gcalStatus.configurado ? '#15803d' : '#854d0e',
+              border:     `1px solid ${gcalStatus.configurado ? '#bbf7d0' : '#fde68a'}`,
+              fontWeight: '600',
+            }}>
+              <span>📅</span>
+              {gcalStatus.configurado
+                ? `Google Calendar ativo — ${gcalStatus.calendario}`
+                : 'Google Calendar não configurado — etapas salvas internamente'
+              }
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Toggle de visualização */}
@@ -356,21 +413,33 @@ const Programacao = () => {
                   ))}
                   {progs.map(p => {
                     const tc = getTipoConfig(p.tipo_servico);
+                    const possoMexer = podeMexer(p);
                     return (
-                      <div key={p.id} draggable
-                        onDragStart={e => { setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }}
-                        style={{ background: tc.bg, borderRadius: '6px', padding: '8px', marginBottom: '6px', border: `1px solid ${tc.border}`, cursor: 'grab' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                          <span style={{ fontSize: '11px' }}>{tc.emoji}</span>
-                          <span style={{ fontSize: '10px', fontWeight: '700', color: tc.color }}>{tc.label}</span>
+                      <div key={p.id} draggable={possoMexer}
+                        onDragStart={possoMexer ? (e => { setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }) : undefined}
+                        style={{ background: tc.bg, borderRadius: '6px', padding: '8px', marginBottom: '6px', border: `1px solid ${tc.border}`, cursor: possoMexer ? 'grab' : 'default' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '11px' }}>{tc.emoji}</span>
+                            <span style={{ fontSize: '10px', fontWeight: '700', color: tc.color }}>{tc.label}</span>
+                          </div>
+                          {!possoMexer && <Lock size={9} color="#9ca3af" title="Somente o criador ou admin pode editar" />}
                         </div>
                         <p style={{ fontSize: '12px', fontWeight: '600', color: tc.color, margin: '0 0 2px' }}>{p.cliente}</p>
                         {p.equipe  && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>👥 {p.equipe}</p>}
-                        {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>🚛 {p.veiculo}</p>}
-                        <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                          <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><Edit size={11} /></button>
-                          <button onClick={() => deletar(p.id)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}><Trash2 size={11} /></button>
-                        </div>
+                        {p.veiculo && <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 2px' }}>🚛 {p.veiculo}</p>}
+                        {/* Quem agendou */}
+                        {p.criado_por_nome && (
+                          <p style={{ fontSize: '10px', color: '#9ca3af', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <User size={9} /> Agendado por {p.criado_por_nome}
+                          </p>
+                        )}
+                        {possoMexer && (
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                            <button onClick={() => abrir(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }} title="Editar"><Edit size={11} /></button>
+                            <button onClick={() => iniciarExclusao(p)} style={{ padding: '3px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }} title="Excluir"><Trash2 size={11} /></button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -471,12 +540,14 @@ const Programacao = () => {
                       ))}
                       {eventos.progs.slice(0, Math.max(0, 3 - eventos.os.length)).map(p => {
                         const tc = getTipoConfig(p.tipo_servico);
+                        const possoMexer = podeMexer(p);
                         return (
                           <div key={`m-p-${p.id}`}
-                            draggable
-                            onDragStart={e => { e.stopPropagation(); setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }}
+                            draggable={possoMexer}
+                            onDragStart={possoMexer ? (e => { e.stopPropagation(); setDragItem(p); e.dataTransfer.effectAllowed = 'move'; }) : undefined}
                             onClick={e => { e.stopPropagation(); abrir(p); }}
-                            style={{ background: tc.bg, borderRadius: '4px', padding: '2px 5px', border: `1px solid ${tc.border}`, display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden', cursor: 'grab' }}>
+                            title={p.criado_por_nome ? `Agendado por ${p.criado_por_nome}` : ''}
+                            style={{ background: tc.bg, borderRadius: '4px', padding: '2px 5px', border: `1px solid ${tc.border}`, display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden', cursor: possoMexer ? 'grab' : 'pointer' }}>
                             <span style={{ fontSize: '9px', flexShrink: 0 }}>{tc.emoji}</span>
                             <span style={{ fontSize: '10px', fontWeight: '600', color: tc.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {p.cliente}
@@ -556,40 +627,133 @@ const Programacao = () => {
               <input type="datetime-local" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} style={inputStyle} />
             </div>
 
-            {/* Equipe — seleção do banco de funcionários */}
-            <div style={{ marginBottom: '14px' }}>
+            {/* Equipe — autocomplete com chips */}
+            <div style={{ marginBottom: '14px' }} ref={equipeRef}>
               <label style={{ fontSize: '13px', color: '#374151', fontWeight: '600', display: 'block', marginBottom: '6px' }}>
-                Equipe <span style={{ fontWeight: '400', color: '#9ca3af' }}>— selecione ou digite</span>
+                Equipe <span style={{ fontWeight: '400', color: '#9ca3af' }}>— selecione ou comece a digitar</span>
               </label>
-              {funcionarios.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
-                  {funcionarios.map(f => {
-                    const nomes = (form.equipe || '').split(',').map(s => s.trim().toLowerCase());
-                    const selecionado = nomes.includes(f.nome.toLowerCase());
-                    return (
-                      <button key={f.id} onClick={() => {
-                        if (selecionado) {
-                          setForm({ ...form, equipe: nomes.filter(n => n !== f.nome.toLowerCase()).join(', ') });
-                        } else {
-                          setForm({ ...form, equipe: form.equipe ? `${form.equipe}, ${f.nome}` : f.nome });
-                        }
+
+              {/* Chips dos selecionados */}
+              {(() => {
+                const selecionados = (form.equipe || '').split(',').map(s => s.trim()).filter(Boolean);
+                if (!selecionados.length) return null;
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
+                    {selecionados.map((nome, i) => (
+                      <span key={i} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        padding: '4px 10px', borderRadius: '20px', fontSize: '12px',
+                        background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe',
+                        fontWeight: '600',
+                      }}>
+                        {nome}
+                        <button onClick={() => {
+                          const novos = selecionados.filter((_, j) => j !== i);
+                          setForm({ ...form, equipe: novos.join(', ') });
+                        }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: '0', lineHeight: 1, fontSize: '14px' }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Input com autocomplete */}
+              <div style={{ position: 'relative' }}>
+                <input
+                  value={equipeQuery}
+                  onChange={e => { setEquipeQuery(e.target.value); setEquipeDropdown(true); }}
+                  onFocus={() => setEquipeDropdown(true)}
+                  onBlur={() => setTimeout(() => setEquipeDropdown(false), 150)}
+                  placeholder={form.equipe ? 'Adicionar mais...' : 'Digite o nome (ex: Diego, Carlos...)'}
+                  style={{ ...inputStyle, paddingLeft: '36px' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', fontSize: '15px', pointerEvents: 'none' }}>🔍</span>
+
+                {/* Dropdown de sugestões */}
+                {equipeDropdown && funcionarios.length > 0 && (() => {
+                  const selecionados = (form.equipe || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                  const q = equipeQuery.trim().toLowerCase();
+                  const sugestoes = funcionarios.filter(f => {
+                    const nome = (f.nome || '').toLowerCase();
+                    const jaAdicionado = selecionados.includes(nome);
+                    const bate = !q || nome.includes(q);
+                    return !jaAdicionado && bate;
+                  });
+                  if (!sugestoes.length && !q) return null;
+                  return (
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999,
+                      background: 'white', border: '1px solid #e5e7eb', borderRadius: '10px',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)', marginTop: '4px',
+                      maxHeight: '220px', overflowY: 'auto',
+                    }}>
+                      {sugestoes.length === 0 ? (
+                        <div style={{ padding: '12px 14px', fontSize: '12px', color: '#9ca3af' }}>
+                          Nenhum funcionário encontrado para "{equipeQuery}"
+                        </div>
+                      ) : sugestoes.map(f => (
+                        <div key={f.id}
+                          onMouseDown={() => {
+                            const novo = form.equipe ? `${form.equipe}, ${f.nome}` : f.nome;
+                            setForm({ ...form, equipe: novo });
+                            setEquipeQuery('');
+                            setEquipeDropdown(false);
+                          }}
+                          style={{
+                            padding: '10px 14px', cursor: 'pointer', display: 'flex',
+                            alignItems: 'center', gap: '10px', borderBottom: '1px solid #f3f4f6',
+                            transition: 'background 0.1s',
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <div style={{
+                            width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                            background: '#0D1B2A', color: 'white', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                            fontSize: '11px', fontWeight: '700',
+                          }}>
+                            {(f.nome || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{f.nome}</div>
+                            {f.funcoes && (
+                              <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                                {f.funcoes.split(',').slice(0, 2).join(' · ')}
+                              </div>
+                            )}
+                          </div>
+                          <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#2563eb', fontWeight: '600' }}>+ Adicionar</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Atalho: mostrar todos se não há query */}
+              {!equipeQuery && funcionarios.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '8px' }}>
+                  {funcionarios.filter(f => {
+                    const selecionados = (form.equipe || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                    return !selecionados.includes((f.nome || '').toLowerCase());
+                  }).map(f => (
+                    <button key={f.id} type="button"
+                      onClick={() => setForm({ ...form, equipe: form.equipe ? `${form.equipe}, ${f.nome}` : f.nome })}
+                      style={{
+                        padding: '3px 10px', borderRadius: '20px', fontSize: '11px', cursor: 'pointer',
+                        border: '1px solid #e5e7eb', background: 'white', color: '#374151',
+                        fontWeight: '500', transition: 'all 0.1s',
                       }}
-                        style={{
-                          padding: '4px 10px', borderRadius: '20px', fontSize: '11px', cursor: 'pointer',
-                          border: `1px solid ${selecionado ? '#2563eb' : '#e5e7eb'}`,
-                          background: selecionado ? '#eff6ff' : 'white',
-                          color: selecionado ? '#2563eb' : '#374151',
-                          fontWeight: selecionado ? '700' : '400',
-                        }}>
-                        {f.nome}
-                        {f.funcoes && <span style={{ fontSize: '10px', color: '#9ca3af', marginLeft: '4px' }}>({f.funcoes.split(',')[0]})</span>}
-                      </button>
-                    );
-                  })}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.borderColor = '#bfdbfe'; e.currentTarget.style.color = '#2563eb'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.color = '#374151'; }}
+                    >
+                      + {f.nome}
+                    </button>
+                  ))}
                 </div>
               )}
-              <input value={form.equipe} onChange={e => setForm({ ...form, equipe: e.target.value })}
-                placeholder="Ex: Diego (motorista), Carlinhos (embalador)" style={inputStyle} />
             </div>
 
             {/* Veículo */}
@@ -629,6 +793,59 @@ const Programacao = () => {
               <button onClick={salvar} disabled={salvando}
                 style={{ padding: '9px 18px', background: '#0f1f3d', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '600', opacity: salvando ? 0.7 : 1 }}>
                 {salvando ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Modal de justificativa para exclusão por não-admin ─────────────── */}
+      {modalJustif && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '28px', width: '440px', maxWidth: '95vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Lock size={16} color="#d97706" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: '#1f2937' }}>Justificar exclusão</h3>
+                <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>Alocação: {modalJustif.cliente}</p>
+              </div>
+            </div>
+            <p style={{ fontSize: '13px', color: '#374151', margin: '0 0 12px' }}>
+              Por não ser admin, você precisa informar o motivo desta exclusão. O registro ficará no log de auditoria.
+            </p>
+            <textarea
+              value={justificativa}
+              onChange={e => setJustificativa(e.target.value)}
+              placeholder="Ex: Mudança cancelada pelo cliente, reagendamento solicitado..."
+              rows={3}
+              style={{
+                width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '8px',
+                fontSize: '13px', resize: 'vertical', boxSizing: 'border-box',
+                fontFamily: 'inherit',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                onClick={() => setModalJustif(null)}
+                disabled={excluindo}
+                style={{ padding: '9px 18px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', background: 'white' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (!justificativa.trim()) { alert('Informe a justificativa.'); return; }
+                  executarExclusao(modalJustif.id, justificativa);
+                }}
+                disabled={excluindo || !justificativa.trim()}
+                style={{
+                  padding: '9px 18px', background: '#dc2626', color: 'white', border: 'none',
+                  borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: '600',
+                  opacity: (excluindo || !justificativa.trim()) ? 0.6 : 1,
+                }}
+              >
+                {excluindo ? 'Excluindo...' : 'Confirmar exclusão'}
               </button>
             </div>
           </div>

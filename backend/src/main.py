@@ -48,6 +48,23 @@ except Exception as _dh_err:
     def init_drive_routes(a): pass
     _DRIVE_HOOKS_OK = False
 
+# ── Google Calendar (graceful: não quebra se não configurado) ────────────────
+try:
+    from google_calendar_service import (
+        criar_evento as gcal_criar,
+        atualizar_evento as gcal_atualizar,
+        deletar_evento as gcal_deletar,
+        status_integracao as gcal_status,
+    )
+    _GCAL_OK = True
+except Exception as _gcal_err:
+    logger.warning(f"google_calendar_service não disponível: {_gcal_err}")
+    def gcal_criar(*a, **kw): return None
+    def gcal_atualizar(*a, **kw): return False
+    def gcal_deletar(*a, **kw): return False
+    def gcal_status(): return {'configurado': False, 'mensagem': 'Módulo não carregado'}
+    _GCAL_OK = False
+
 app = Flask(__name__)
 
 _db_file = os.path.join(current_dir, "legacy_moving.db").replace("\\", "/")
@@ -200,11 +217,13 @@ def _cadastro_dict(c):
 
 def _contrato_dict(c):
     cli = Cliente.query.get(c.cliente_id) if c.cliente_id else None
+    orc = Orcamento.query.get(c.orcamento_id) if c.orcamento_id else None
     return {
         "id": c.id, "numero": c.numero, "cliente": c.cliente, "cliente_id": c.cliente_id,
         "email_cliente": (cli.email if cli else '') or '',
         "telefone_cliente": (cli.telefone if cli else '') or '',
-        "orcamento_id": c.orcamento_id, "tipo_servico": c.tipo_servico,
+        "orcamento_id": c.orcamento_id, "orcamento_numero": orc.numero if orc else None,
+        "tipo_servico": c.tipo_servico,
         "endereco_origem": c.endereco_origem, "endereco_destino": c.endereco_destino,
         "data_execucao": c.data_execucao.isoformat() if c.data_execucao else None,
         "valor_servico": c.valor_servico, "valor_seguro": c.valor_seguro, "valor": c.valor,
@@ -216,8 +235,10 @@ def _contrato_dict(c):
 
 
 def _os_dict(o):
+    con = Contrato.query.get(o.contrato_id) if o.contrato_id else None
     return {
         "id": o.id, "numero": o.numero, "contrato_id": o.contrato_id,
+        "contrato_numero": con.numero if con else None,
         "cliente": o.cliente, "cliente_id": o.cliente_id,
         "tipo_servico": o.tipo_servico,
         "endereco_origem": o.endereco_origem, "endereco_destino": o.endereco_destino,
@@ -1864,6 +1885,14 @@ def atualizar_etapa(os_id, etapa_id):
 @require_role('admin', 'operacional')
 def deletar_etapa(os_id, etapa_id):
     e = EtapaOperacional.query.filter_by(id=etapa_id, os_id=os_id).first_or_404()
+
+    # Remover da Programacao e do Google Calendar antes de deletar a etapa
+    prog = Programacao.query.filter_by(etapa_id=etapa_id).first()
+    if prog:
+        if prog.google_event_id:
+            gcal_deletar(prog.google_event_id)
+        db.session.delete(prog)
+
     db.session.delete(e)
     db.session.commit()
     return jsonify({"status": "deletado"})
@@ -1896,23 +1925,85 @@ def _sync_programacao_os(os_):
 
 
 def _sync_programacao_etapa(etapa):
+    """
+    Cria ou atualiza entrada na tabela Programacao quando uma etapa é salva.
+    Sincroniza também com o Google Calendar (se configurado).
+    """
     os_ = OrdemServico.query.get(etapa.os_id)
     if not os_ or not etapa.data:
         return
+
     semana = etapa.data.isocalendar()[1]
     ano = etapa.data.year
-    # Remove programação existente para mesma etapa
-    for p in Programacao.query.filter_by(os_id=etapa.os_id).all():
-        if p.data and p.data.date() == etapa.data.date():
-            db.session.delete(p)
-    prog = Programacao(
-        os_id=os_.id, cliente=os_.cliente,
-        data=etapa.data, equipe=etapa.equipe or '',
-        veiculo=etapa.veiculos or '',
-        status='agendado', semana=semana, ano=ano,
-    )
-    db.session.add(prog)
-    db.session.commit()
+
+    # Upsert por etapa_id (preciso, não tem colisão entre etapas do mesmo dia)
+    existente = Programacao.query.filter_by(etapa_id=etapa.id).first()
+
+    if existente:
+        # Atualizar programação existente
+        existente.cliente = os_.cliente
+        existente.tipo_servico = etapa.tipo or 'mudanca'
+        existente.data = etapa.data
+        existente.equipe = etapa.equipe or ''
+        existente.veiculo = etapa.veiculos or ''
+        existente.semana = semana
+        existente.ano = ano
+        db.session.commit()
+
+        # Atualizar evento no Google Calendar
+        if existente.google_event_id:
+            gcal_atualizar(
+                existente.google_event_id,
+                cliente=os_.cliente,
+                tipo=etapa.tipo or 'mudanca',
+                data=etapa.data,
+                equipe=etapa.equipe or '',
+                veiculo=etapa.veiculos or '',
+                observacoes=etapa.observacoes or '',
+                os_numero=os_.numero or '',
+            )
+        else:
+            # Ainda não tem evento no Calendar → criar
+            event_id = gcal_criar(
+                cliente=os_.cliente,
+                tipo=etapa.tipo or 'mudanca',
+                data=etapa.data,
+                equipe=etapa.equipe or '',
+                veiculo=etapa.veiculos or '',
+                observacoes=etapa.observacoes or '',
+                os_numero=os_.numero or '',
+            )
+            if event_id:
+                existente.google_event_id = event_id
+                db.session.commit()
+    else:
+        # Criar novo evento no Google Calendar primeiro
+        event_id = gcal_criar(
+            cliente=os_.cliente,
+            tipo=etapa.tipo or 'mudanca',
+            data=etapa.data,
+            equipe=etapa.equipe or '',
+            veiculo=etapa.veiculos or '',
+            observacoes=etapa.observacoes or '',
+            os_numero=os_.numero or '',
+        )
+
+        # Criar nova entrada na programação
+        prog = Programacao(
+            os_id=os_.id,
+            etapa_id=etapa.id,
+            cliente=os_.cliente,
+            tipo_servico=etapa.tipo or 'mudanca',
+            data=etapa.data,
+            equipe=etapa.equipe or '',
+            veiculo=etapa.veiculos or '',
+            status='agendado',
+            semana=semana,
+            ano=ano,
+            google_event_id=event_id,
+        )
+        db.session.add(prog)
+        db.session.commit()
 
 
 # ── FECHAMENTO OPERACIONAL ────────────────────────────────────────────────────
@@ -1938,17 +2029,58 @@ def _fechamento_dict(f):
     }
 
 
+def _sugestao_custos(os_):
+    """
+    Calcula sugestão de custos a partir dos dados da OS:
+    - custo_equipe: soma valor_diaria × quantidade_dias de todos os Funcionários vinculados
+    - custo_materiais: soma valor_total das MovimentacaoEstoque de saída para esta OS
+    Retorna dict com os campos de custo calculados automaticamente.
+    """
+    dias = max(int(os_.quantidade_dias or 1), 1)
+
+    # ── Equipe ────────────────────────────────────────────────────────────────
+    custo_equipe = 0.0
+    func_links = FuncionarioOS.query.filter_by(os_id=os_.id).all()
+    func_ids_vistos = set()
+    for fl in func_links:
+        if fl.funcionario_id in func_ids_vistos:
+            continue
+        func_ids_vistos.add(fl.funcionario_id)
+        f = Funcionario.query.get(fl.funcionario_id)
+        if f:
+            if f.tipo == 'diarista' and f.valor_diaria:
+                custo_equipe += f.valor_diaria * dias
+            elif f.tipo == 'fixo' and f.salario:
+                # Aloca proporção mensal: salário / 26 dias × dias trabalhados
+                custo_equipe += round(f.salario / 26 * dias, 2)
+
+    # ── Materiais (estoque consumido) ─────────────────────────────────────────
+    movs = MovimentacaoEstoque.query.filter(
+        MovimentacaoEstoque.os_id == os_.id,
+        MovimentacaoEstoque.tipo.in_(['saida', 'consumo_os', 'consumo'])
+    ).all()
+    custo_materiais = sum(m.valor_total or 0 for m in movs)
+
+    return {
+        "custo_equipe":    round(custo_equipe, 2),
+        "custo_materiais": round(custo_materiais, 2),
+    }
+
+
 @app.route('/api/os/<int:id>/fechamento', methods=['GET'])
 @require_role('admin', 'financeiro', 'operacional')
 def get_fechamento(id):
     os_ = OrdemServico.query.get_or_404(id)
     f = FechamentoOperacional.query.filter_by(os_id=id).first()
     if not f:
-        # Cria esboço com dados da OS
+        # Cria esboço com dados da OS pré-preenchidos
         rec = Recibo.query.filter_by(os_id=id, status='recebido').first()
+        sugestao = _sugestao_custos(os_)
         f = FechamentoOperacional(
             os_id=id,
             receita_bruta=rec.valor_cobrado if rec else os_.valor_total or 0,
+            custo_equipe=sugestao['custo_equipe'],
+            custo_materiais=sugestao['custo_materiais'],
             status='rascunho',
         )
         # Tenta detectar organizer via cliente
@@ -1956,9 +2088,24 @@ def get_fechamento(id):
             cli = Cliente.query.get(os_.cliente_id)
             if cli and cli.organizer_id:
                 f.organizer_id = cli.organizer_id
+        f.calcular()
         db.session.add(f)
         db.session.commit()
-    return jsonify(_fechamento_dict(f))
+    result = _fechamento_dict(f)
+    # Adiciona sugestão atualizada (para o botão "Recalcular da OS")
+    result['_sugestao'] = _sugestao_custos(os_)
+    return jsonify(result)
+
+
+@app.route('/api/os/<int:id>/fechamento/sugestao', methods=['GET'])
+@require_role('admin', 'financeiro', 'operacional')
+def sugestao_fechamento(id):
+    """Retorna custos calculados da OS sem criar/alterar fechamento."""
+    os_ = OrdemServico.query.get_or_404(id)
+    rec = Recibo.query.filter_by(os_id=id, status='recebido').first()
+    sugestao = _sugestao_custos(os_)
+    sugestao['receita_bruta'] = rec.valor_cobrado if rec else os_.valor_total or 0
+    return jsonify(sugestao)
 
 
 @app.route('/api/os/<int:id>/fechamento', methods=['PUT'])
@@ -2058,7 +2205,16 @@ def listar_programacao():
         "data": p.data.isoformat() if p.data else None,
         "equipe": p.equipe, "veiculo": p.veiculo,
         "status": p.status, "semana": p.semana, "ano": p.ano,
+        "criado_por_id":   p.criado_por_id,
+        "criado_por_nome": p.criado_por_nome or '',
     } for p in items])
+
+
+@app.route('/api/programacao/gcal-status', methods=['GET'])
+@jwt_required()
+def gcal_status_endpoint():
+    """Verifica status da integração com Google Calendar."""
+    return jsonify(gcal_status())
 
 
 @app.route('/api/programacao/sync', methods=['POST'])
@@ -2089,13 +2245,16 @@ def criar_programacao():
             dt = datetime.fromisoformat(data['data'])
         except ValueError:
             pass
+    u = current_user()
     p = Programacao(
         os_id=data.get('os_id'), cliente=data['cliente'],
         tipo_servico=data.get('tipo_servico', 'mudanca'),
         data=dt, equipe=data.get('equipe', ''), veiculo=data.get('veiculo', ''),
         status='agendado',
         semana=dt.isocalendar()[1] if dt else None,
-        ano=dt.year if dt else None
+        ano=dt.year if dt else None,
+        criado_por_id=u.id if u else None,
+        criado_por_nome=u.name if u else None,
     )
     db.session.add(p)
     db.session.commit()
@@ -2123,9 +2282,30 @@ def atualizar_programacao(id):
 
 
 @app.route('/api/programacao/<int:id>', methods=['DELETE'])
-@require_role('admin', 'operacional')
+@require_role('admin', 'operacional', 'vendedor', 'financeiro')
 def deletar_programacao(id):
     p = Programacao.query.get_or_404(id)
+    u = current_user()
+    is_admin = u and u.role == 'admin'
+    is_criador = u and p.criado_por_id == u.id
+
+    if not is_admin and not is_criador:
+        return err("Apenas o admin ou quem agendou pode excluir esta alocação.", 403)
+
+    if not is_admin:
+        # Não-admin precisa justificar a exclusão
+        body = request.json or {}
+        justificativa = (body.get('justificativa') or '').strip()
+        if not justificativa:
+            return err("Justificativa obrigatória para exclusão.", 400)
+        # Log de auditoria — registrar quem justificou e o motivo
+        registrar_audit(u, 'excluir', 'programacao', id,
+                        f"Justificativa: {justificativa} | Cliente: {p.cliente}")
+
+    # Remove do Google Calendar se tiver evento
+    if p.google_event_id:
+        gcal_deletar(p.google_event_id)
+
     db.session.delete(p)
     db.session.commit()
     return jsonify({"status": "deletado"})

@@ -359,6 +359,13 @@ class Programacao(db.Model):
     __tablename__ = 'programacoes'
     id = db.Column(db.Integer, primary_key=True)
     os_id = db.Column(db.Integer, db.ForeignKey('ordens_servico.id'), nullable=True)
+    # Rastreabilidade: qual etapa gerou esta entrada (para upsert correto)
+    etapa_id = db.Column(db.Integer, db.ForeignKey('etapas_operacionais.id'), nullable=True)
+    # ID do evento criado no Google Calendar (para atualizar/deletar)
+    google_event_id = db.Column(db.String(255), nullable=True)
+    # Quem criou este agendamento
+    criado_por_id   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    criado_por_nome = db.Column(db.String(200), nullable=True)
     cliente = db.Column(db.String(255), nullable=False)
     tipo_servico = db.Column(db.String(50), default='mudanca')  # mudanca, embalagem, icamento, transporte, etc
     data = db.Column(db.DateTime, nullable=True)
@@ -682,9 +689,30 @@ class AIUsageLog(db.Model):
 
 
 # ── INICIALIZAÇÃO DO BANCO ───────────────────────────────────────────────────
+def _migrate_columns(engine):
+    """Aplica migrações incrementais (adiciona colunas novas a tabelas existentes)."""
+    migrations = [
+        # Programacao: rastreamento de etapa, evento Google Calendar e criador
+        "ALTER TABLE programacoes ADD COLUMN etapa_id INTEGER REFERENCES etapas_operacionais(id)",
+        "ALTER TABLE programacoes ADD COLUMN google_event_id VARCHAR(255)",
+        "ALTER TABLE programacoes ADD COLUMN criado_por_id INTEGER REFERENCES users(id)",
+        "ALTER TABLE programacoes ADD COLUMN criado_por_nome VARCHAR(200)",
+        # Contrato: número do orçamento de origem (já adicionado ao dict, garantir coluna)
+        "ALTER TABLE contratos ADD COLUMN orcamento_numero VARCHAR(50)",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(db.text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Coluna já existe → ignorar
+
+
 def init_db(app):
     with app.app_context():
         db.create_all()
+        _migrate_columns(db.engine)
 
         # ── Usuários padrão ──
         if not User.query.filter_by(cpf='12345678901').first():

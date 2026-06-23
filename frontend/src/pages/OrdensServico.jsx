@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Plus, Search, Edit, Trash2, AlertCircle, X, PlayCircle, CheckCircle, Calendar, DollarSign, MessageCircle, Receipt, Camera } from 'lucide-react';
 import { api } from '../lib/api';
@@ -80,6 +80,9 @@ const OrdensServico = () => {
   const [equipeOS, setEquipeOS] = useState([]);
   const [editandoEtapa, setEditandoEtapa] = useState(null);
   const [salvandoEtapa, setSalvandoEtapa] = useState(false);
+  const [etapaEquipeQuery, setEtapaEquipeQuery] = useState('');
+  const [etapaEquipeDropdown, setEtapaEquipeDropdown] = useState(false);
+  const etapaEquipeRef = useRef(null);
   // Avaria prompt pós-conclusão
   const [showAvariaPrompt, setShowAvariaPrompt] = useState(false);
   const [osConcluidaInfo, setOsConcluidaInfo] = useState(null);
@@ -223,6 +226,8 @@ const OrdensServico = () => {
       setEtapas(await api.getEtapas(osEtapas.id));
       setFormEtapa(EMPTY_ETAPA);
       setEditandoEtapa(null);
+      setEtapaEquipeQuery('');
+      setEtapaEquipeDropdown(false);
     } catch (e) { alert(e.message); }
     finally { setSalvandoEtapa(false); }
   };
@@ -304,7 +309,14 @@ const OrdensServico = () => {
               <tr key={o.id} style={{ borderTop: '0.5px solid #f3f4f6' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{o.numero}</td>
+                <td style={{ padding: '12px 16px' }}>
+                  <div style={{ fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{o.numero}</div>
+                  {o.contrato_numero && (
+                    <div style={{ fontSize: '10px', color: '#C8A55A', fontWeight: '600', marginTop: '2px', letterSpacing: '0.3px' }}>
+                      ↳ {o.contrato_numero}
+                    </div>
+                  )}
+                </td>
                 <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1a1a1a' }}>{o.cliente}</td>
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
                   {o.data_mudanca ? new Date(o.data_mudanca).toLocaleDateString('pt-BR') : '—'}
@@ -640,10 +652,113 @@ const OrdensServico = () => {
                       placeholder="0" style={{ ...inputStyle, fontSize: '13px' }} />
                   </div>
                 </div>
-                <div style={{ marginBottom: '10px' }}>
-                  <label style={{ fontSize: '12px', color: '#374151', display: 'block', marginBottom: '3px' }}>Equipe (nomes)</label>
-                  <input value={formEtapa.equipe} onChange={e => setFormEtapa(f => ({ ...f, equipe: e.target.value }))}
-                    placeholder="Ex: João, Pedro, Carlos" style={{ ...inputStyle, fontSize: '13px' }} />
+                {/* Equipe — autocomplete */}
+                <div style={{ marginBottom: '10px' }} ref={etapaEquipeRef}>
+                  <label style={{ fontSize: '12px', color: '#374151', display: 'block', marginBottom: '4px' }}>Equipe (nomes)</label>
+
+                  {/* Chips dos selecionados */}
+                  {(formEtapa.equipe || '').split(',').map(s => s.trim()).filter(Boolean).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
+                      {(formEtapa.equipe || '').split(',').map(s => s.trim()).filter(Boolean).map((nome, i) => (
+                        <span key={i} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '4px',
+                          padding: '3px 8px', borderRadius: '20px', fontSize: '11px',
+                          background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', fontWeight: '600',
+                        }}>
+                          {nome}
+                          <button type="button" onClick={() => {
+                            const novos = (formEtapa.equipe || '').split(',').map(s => s.trim()).filter(Boolean).filter((_, j) => j !== i);
+                            setFormEtapa(f => ({ ...f, equipe: novos.join(', ') }));
+                          }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: 0, fontSize: '13px', lineHeight: 1 }}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Input autocomplete */}
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      value={etapaEquipeQuery}
+                      onChange={e => { setEtapaEquipeQuery(e.target.value); setEtapaEquipeDropdown(true); }}
+                      onFocus={() => setEtapaEquipeDropdown(true)}
+                      onBlur={() => setTimeout(() => setEtapaEquipeDropdown(false), 150)}
+                      placeholder={formEtapa.equipe ? 'Adicionar mais...' : 'Digite o nome...'}
+                      style={{ ...inputStyle, fontSize: '13px', paddingLeft: '30px' }}
+                      autoComplete="off"
+                    />
+                    <span style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', fontSize: '13px', pointerEvents: 'none' }}>🔍</span>
+
+                    {/* Dropdown */}
+                    {etapaEquipeDropdown && (() => {
+                      const selecionados = (formEtapa.equipe || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                      const q = etapaEquipeQuery.trim().toLowerCase();
+                      const sugestoes = funcionarios.filter(f => {
+                        const nome = (f.nome || '').toLowerCase();
+                        return !selecionados.includes(nome) && (!q || nome.includes(q));
+                      });
+                      if (!sugestoes.length) return null;
+                      return (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000,
+                          background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px',
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.12)', marginTop: '3px',
+                          maxHeight: '180px', overflowY: 'auto',
+                        }}>
+                          {sugestoes.map(f => (
+                            <div key={f.id}
+                              onMouseDown={() => {
+                                const atual = formEtapa.equipe;
+                                setFormEtapa(prev => ({ ...prev, equipe: atual ? `${atual}, ${f.nome}` : f.nome }));
+                                setEtapaEquipeQuery('');
+                                setEtapaEquipeDropdown(false);
+                              }}
+                              style={{
+                                padding: '8px 12px', cursor: 'pointer', display: 'flex',
+                                alignItems: 'center', gap: '8px', borderBottom: '1px solid #f3f4f6',
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <div style={{
+                                width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0,
+                                background: '#0D1B2A', color: 'white', display: 'flex',
+                                alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700',
+                              }}>
+                                {(f.nome || '?').charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '12px', fontWeight: '600', color: '#1a1a1a' }}>{f.nome}</div>
+                                {f.funcoes && <div style={{ fontSize: '10px', color: '#6b7280' }}>{f.funcoes.split(',')[0]}</div>}
+                              </div>
+                              <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#2563eb', fontWeight: '600' }}>+ Add</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Quick-add chips se não há query */}
+                  {!etapaEquipeQuery && funcionarios.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                      {funcionarios.filter(f => {
+                        const selecionados = (formEtapa.equipe || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                        return !selecionados.includes((f.nome || '').toLowerCase());
+                      }).map(f => (
+                        <button key={f.id} type="button"
+                          onClick={() => setFormEtapa(prev => ({ ...prev, equipe: prev.equipe ? `${prev.equipe}, ${f.nome}` : f.nome }))}
+                          style={{
+                            padding: '2px 8px', borderRadius: '20px', fontSize: '10px', cursor: 'pointer',
+                            border: '1px solid #e5e7eb', background: 'white', color: '#374151', fontWeight: '500',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.borderColor = '#bfdbfe'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'white'; e.currentTarget.style.color = '#374151'; e.currentTarget.style.borderColor = '#e5e7eb'; }}
+                        >
+                          + {f.nome}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div style={{ marginBottom: '12px' }}>
                   <label style={{ fontSize: '12px', color: '#374151', display: 'block', marginBottom: '3px' }}>Observações</label>

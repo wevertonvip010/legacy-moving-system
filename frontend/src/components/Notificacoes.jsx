@@ -62,12 +62,12 @@ const Notificacoes = () => {
   const gerarNotificacoes = useCallback(async () => {
     setLoading(true);
     try {
-      const [dash, avRes, estoque, leadsRes, osRes] = await Promise.allSettled([
+      const [dash, avRes, estoque, leadsRes, osRes] = await Promise.allSettled([ // eslint-disable-line
         api.dashboard(),
         api.getResumoAvarias(),
         api.getEstoque(),
         api.getLeads(),
-        api.getOrdens(),
+        api.getOS({ limit: 100 }),
       ]);
 
       const items = [];

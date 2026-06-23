@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   DollarSign, TrendingUp, TrendingDown, AlertCircle, CheckCircle,
-  ChevronDown, ChevronRight, Save, Award, X, Eye, Lock
+  ChevronDown, ChevronRight, Save, Award, X, Eye, Lock, RefreshCw, Zap
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
@@ -38,8 +38,10 @@ export default function FechamentoOperacional() {
   const [fechamento, setFechamento] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
+  const [recalculando, setRecalculando] = useState(false);
   const [erro, setErro] = useState(null);
   const [view, setView] = useState('lista'); // lista | editar
+  const [sugestao, setSugestao] = useState(null); // custos calculados da OS
 
   useEffect(() => { carregar(); }, []);
 
@@ -66,6 +68,7 @@ export default function FechamentoOperacional() {
           const fech = await api.getOSFechamento(osAlvo.id);
           setSelecionado(osAlvo);
           setFechamento(fech);
+          if (fech._sugestao) setSugestao(fech._sugestao);
           setView('editar');
         }
       }
@@ -80,8 +83,35 @@ export default function FechamentoOperacional() {
     try {
       const f = await api.getOSFechamento(os.id);
       setFechamento(f);
+      // Backend já retorna _sugestao junto
+      if (f._sugestao) setSugestao(f._sugestao);
       setView('editar');
     } catch (e) { setErro(e.message); }
+  };
+
+  // Recalcula custos da OS e aplica no formulário
+  const recalcularDaOS = async () => {
+    if (!selecionado) return;
+    if (!confirm('Isso vai recalcular automaticamente os valores de Equipe e Materiais a partir dos dados da OS. Os outros custos serão mantidos. Continuar?')) return;
+    setRecalculando(true);
+    try {
+      const s = await api.getSugestaoFechamento(selecionado.id);
+      setSugestao(s);
+      setFechamento(prev => {
+        const next = {
+          ...prev,
+          receita_bruta: s.receita_bruta ?? prev.receita_bruta,
+          custo_equipe: s.custo_equipe,
+          custo_materiais: s.custo_materiais,
+        };
+        const custo = CATEGORIAS_CUSTO.reduce((sum, c) => sum + (parseFloat(next[c.key]) || 0), 0);
+        const lucro = (parseFloat(next.receita_bruta) || 0) - custo;
+        const margem = next.receita_bruta > 0 ? (lucro / next.receita_bruta * 100) : 0;
+        const comissao = Math.max(0, lucro) * ((parseFloat(next.percentual_comissao) || 10) / 100);
+        return { ...next, lucro_liquido: lucro, margem_percentual: margem, comissao_organizer: comissao, custo_total: custo };
+      });
+    } catch (e) { alert('Erro ao recalcular: ' + e.message); }
+    finally { setRecalculando(false); }
   };
 
   const atualizar = (key, val) => {
@@ -146,6 +176,7 @@ export default function FechamentoOperacional() {
 
   return (
     <div style={{ padding: '24px', background: '#f8f9fa', minHeight: '100vh' }}>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div>
@@ -323,22 +354,61 @@ export default function FechamentoOperacional() {
 
             {/* Custos */}
             <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '0.5px solid #e5e7eb' }}>
-              <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <TrendingDown size={16} color="#ef4444" /> Custos Operacionais
-              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <TrendingDown size={16} color="#ef4444" /> Custos Operacionais
+                </h3>
+                <button
+                  onClick={recalcularDaOS}
+                  disabled={recalculando}
+                  title="Recalcular automaticamente Equipe e Materiais a partir dos dados da OS"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px',
+                    background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px',
+                    fontSize: '11px', color: '#0369a1', cursor: 'pointer', fontWeight: '600',
+                  }}
+                >
+                  <RefreshCw size={11} style={{ animation: recalculando ? 'spin 0.8s linear infinite' : 'none' }} />
+                  Recalcular da OS
+                </button>
+              </div>
+
+              {/* Banner se algum valor foi pré-calculado */}
+              {sugestao && (sugestao.custo_equipe > 0 || sugestao.custo_materiais > 0) && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#166534' }}>
+                  <Zap size={13} color="#16a34a" />
+                  <span>
+                    <strong>Pré-calculado da OS:</strong>{' '}
+                    Equipe {fmt(sugestao.custo_equipe)} · Materiais {fmt(sugestao.custo_materiais)}.
+                    Revise e ajuste conforme necessário.
+                  </span>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                {CATEGORIAS_CUSTO.map(({ key, label, icon }) => (
-                  <div key={key}>
-                    <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
-                      {icon} {label} (R$)
-                    </label>
-                    <input type="number" step="0.01" value={fechamento[key] || ''}
-                      onChange={e => atualizar(key, e.target.value)}
-                      placeholder="0,00"
-                      disabled={false}
-                      style={inp} />
-                  </div>
-                ))}
+                {CATEGORIAS_CUSTO.map(({ key, label, icon }) => {
+                  const isAutoCalc = sugestao && (key === 'custo_equipe' || key === 'custo_materiais') && sugestao[key] > 0;
+                  return (
+                    <div key={key}>
+                      <label style={{ fontSize: '12px', color: '#6b7280', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                        {icon} {label} (R$)
+                        {isAutoCalc && (
+                          <span style={{ fontSize: '9px', background: '#dcfce7', color: '#16a34a', padding: '1px 5px', borderRadius: '8px', fontWeight: '600' }}>
+                            auto
+                          </span>
+                        )}
+                      </label>
+                      <input type="number" step="0.01" value={fechamento[key] || ''}
+                        onChange={e => atualizar(key, e.target.value)}
+                        placeholder="0,00"
+                        style={{
+                          ...inp,
+                          borderColor: isAutoCalc ? '#86efac' : '#e5e7eb',
+                          background: isAutoCalc ? '#f0fdf4' : 'white',
+                        }} />
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

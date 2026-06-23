@@ -91,6 +91,7 @@ export const api = {
 
   // Fechamento Operacional por OS
   getOSFechamento: (osId) => req('GET', `/api/os/${osId}/fechamento`),
+  getSugestaoFechamento: (osId) => req('GET', `/api/os/${osId}/fechamento/sugestao`),
   salvarFechamento: (osId, data) => req('PUT', `/api/os/${osId}/fechamento`, data),
   finalizarFechamento: (osId) => req('POST', `/api/os/${osId}/fechamento/finalizar`),
   getFechamentos: (params = {}) => {
@@ -148,8 +149,9 @@ export const api = {
   },
   createProgramacao: (data) => req('POST', '/api/programacao', data),
   updateProgramacao: (id, data) => req('PUT', `/api/programacao/${id}`, data),
-  deleteProgramacao: (id) => req('DELETE', `/api/programacao/${id}`),
+  deleteProgramacao: (id, body) => req('DELETE', `/api/programacao/${id}`, body || undefined),
   syncProgramacao: () => req('POST', '/api/programacao/sync', {}),
+  getGcalStatus: () => req('GET', '/api/programacao/gcal-status'),
 
   // Estoque
   getEstoque: () => req('GET', '/api/estoque'),

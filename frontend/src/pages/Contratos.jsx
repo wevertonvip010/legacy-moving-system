@@ -16,7 +16,6 @@ const Contratos = () => {
   const [error, setError] = useState(null);
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState('todos');
-  const [revisados, setRevisados] = useState(new Set()); // IDs dos contratos revisados nesta sessão
   const [confirmandoOS, setConfirmandoOS] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -31,21 +30,27 @@ const Contratos = () => {
   useEffect(() => { carregar(); }, [carregar]);
 
   const marcarEnviado = async (c) => {
-    if (!revisados.has(c.id)) {
-      alert('Revise o contrato no Drive antes de enviá-lo ao cliente.');
-      return;
-    }
-    if (!window.confirm(`Confirmar envio do contrato ${c.numero} ao cliente "${c.cliente}"?\n\nEsta ação não pode ser desfeita.`)) return;
+    if (!window.confirm(`Confirmar envio do contrato ${c.numero} ao cliente "${c.cliente}"?\n\nO status será alterado para Enviado, liberando a geração de OS.`)) return;
     try {
       await api.updateContrato(c.id, { status: 'enviado' });
       carregar();
     } catch (e) { alert(e.message); }
   };
 
+  const marcarAssinado = async (c) => {
+    if (!window.confirm(`Marcar contrato ${c.numero} como assinado pelo cliente?`)) return;
+    try {
+      await api.updateContrato(c.id, { status: 'assinado' });
+      carregar();
+    } catch (e) { alert(e.message); }
+  };
+
   const abrirDrive = (c) => {
-    if (!c.drive_url) { alert('URL do contrato não disponível. Verifique a configuração do Google Drive.'); return; }
+    if (!c.drive_url) {
+      alert('PDF não disponível no Drive.\nDica: configure o Google Drive em Configurações para gerar o PDF automaticamente.\nVocê ainda pode gerar a OS normalmente.');
+      return;
+    }
     window.open(c.drive_url, '_blank');
-    setRevisados(prev => new Set([...prev, c.id]));
   };
 
   const enviarWhatsApp = (c) => {
@@ -129,7 +134,7 @@ const Contratos = () => {
       {/* Fluxo de status */}
       <div style={{ background: 'white', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151' }}>
         <AlertCircle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
-        <span><strong>Fluxo:</strong> Contrato gerado (Rascunho) → Revisar PDF no Drive → Enviar ao cliente (muda para Enviado) → Gerar OS</span>
+        <span><strong>Fluxo:</strong> Contrato gerado (Rascunho) → <strong>Marcar Enviado</strong> → Enviar por WhatsApp/E-mail ao cliente → <strong>Marcar Assinado</strong> (opcional) → <strong>Gerar OS</strong></span>
       </div>
 
       {/* Filtros */}
@@ -165,7 +170,14 @@ const Contratos = () => {
               <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#9ca3af' }}>Nenhum contrato encontrado</td></tr>
             ) : filtrados.map(c => (
               <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f1f3d', fontFamily: 'monospace' }}>{c.numero}</td>
+                <td style={{ padding: '14px 16px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: '#0D1B2A', fontFamily: 'monospace' }}>{c.numero}</div>
+                  {c.orcamento_numero && (
+                    <div style={{ fontSize: '10px', color: '#C8A55A', fontWeight: '600', marginTop: '2px', letterSpacing: '0.3px' }}>
+                      ↳ {c.orcamento_numero}
+                    </div>
+                  )}
+                </td>
                 <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '500', color: '#1a1a1a' }}>{c.cliente}</td>
                 <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>{TIPO_LABEL[c.tipo_servico] || c.tipo_servico || '—'}</td>
                 <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#1a1a1a' }}>{fmt(c.valor)}</td>
@@ -184,12 +196,21 @@ const Contratos = () => {
                       <ExternalLink size={12} />Revisar PDF
                     </button>
 
-                    {/* Enviar ao cliente — apenas após revisar e em rascunho */}
+                    {/* Marcar como Enviado — disponível em rascunho */}
                     {c.status === 'rascunho' && (
                       <button onClick={() => marcarEnviado(c)}
-                        title={revisados.has(c.id) ? 'Enviar ao cliente' : 'Revise o PDF primeiro'}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: revisados.has(c.id) ? '#f0fdf4' : '#f9fafb', border: `1px solid ${revisados.has(c.id) ? '#bbf7d0' : '#e5e7eb'}`, borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: revisados.has(c.id) ? '#15803d' : '#9ca3af' }}>
-                        <Send size={12} />Enviar ao cliente
+                        title="Confirmar envio ao cliente"
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: '#15803d', fontWeight: 600 }}>
+                        <Send size={12} />Marcar Enviado
+                      </button>
+                    )}
+
+                    {/* Marcar como Assinado — disponível quando enviado */}
+                    {c.status === 'enviado' && (
+                      <button onClick={() => marcarAssinado(c)}
+                        title="Cliente assinou o contrato"
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', color: '#6d28d9', fontWeight: 600 }}>
+                        <CheckCircle size={12} />Marcar Assinado
                       </button>
                     )}
 
