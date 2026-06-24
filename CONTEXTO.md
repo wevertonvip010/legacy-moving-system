@@ -127,6 +127,24 @@ ConfigSistema   → chave/valor (JSON)
 
 ---
 
+## O QUE FOI FEITO — SESSÃO 4 (2026-06-24)
+
+### 1. Auditoria completa do projeto
+- Mapeamento de todos os 23 módulos, banco de dados (31 tabelas), integrações e pendências
+- Diagnóstico: ERP 100% funcional, site institucional não existe, deploy ainda local
+- Relatório entregue com classificação: pronto / parcial / não feito / quebrado / decisão necessária
+- Identificado: `VITE_API_URL` aponta para IP local — precisa atualizar para URL de produção
+- Identificado: `site-integracao.js` tem URL placeholder — precisa atualizar após deploy
+- Identificado: Google Drive backup pronto mas não configurado (Service Account pendente)
+
+### 2. Google Drive backup — diagnóstico
+- `drive_service.py` + `drive_hooks.py` + `routes/drive.py` já implementados
+- Arquitetura de pastas definida: Legacy Moving ERP / Clientes / Orcamentos / Contratos / OrdensServico / Recibos / Fechamentos / Avarias
+- `DRIVE_ADMIN_EMAIL` já configurado para `legacymovingbr@gmail.com`
+- Pendente: criar Service Account no Google Cloud e configurar `GOOGLE_SERVICE_ACCOUNT_JSON` no `.env`
+
+---
+
 ## O QUE FOI FEITO — SESSÃO 3 (2026-06-23)
 
 ### 1. Organizer → Aba Indicações
